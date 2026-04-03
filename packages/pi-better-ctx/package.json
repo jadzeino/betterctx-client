@@ -1,0 +1,28 @@
+{
+  "name": "pi-better-ctx",
+  "version": "1.0.8",
+  "description": "Pi Coding Agent extension that routes bash, read, grep, find, and ls through better-ctx for 60-90% token savings",
+  "keywords": ["pi-package", "better-ctx", "token-optimization", "compression"],
+  "license": "MIT",
+  "author": "Yves Gugger",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jadzeino/betterctx-client.git",
+    "directory": "packages/pi-better-ctx"
+  },
+  "homepage": "https://betterctx.com",
+  "bugs": {
+    "url": "https://github.com/jadzeino/betterctx-client/issues"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.50.0",
+    "@mariozechner/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "files": [
+    "extensions/",
+    "README.md"
+  ]
+}

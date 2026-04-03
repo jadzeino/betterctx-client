@@ -1,0 +1,11 @@
+# Paths excluded from this repository.
+# Used by .githooks/pre-push to enforce boundaries.
+# One path per line. Trailing slashes match directories.
+
+cloud/
+docker-compose.yml
+.gitlab-ci.yml
+deploy.sh
+website/
+DEVELOPMENT.md
+Makefile.deploy

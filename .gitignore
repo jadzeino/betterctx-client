@@ -1,0 +1,36 @@
+target/
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+deploy.sh
+Dockerfile.web
+website/
+.gitlab-ci.yml
+/src/
+/package.json
+/package-lock.json
+/tsconfig.json
+better-ctx.config.example.json
+INTERNAL_ARCHITECTURE.md
+RELEASE_SUMMARY.md
+aur/
+memory-bank/
+server.md
+
+.DS_Store
+DEPLOY_CHECKLIST.md
+DISCORD_POST.md
+
+# ── Lab / Neural (private, not for OSS) ──
+lab/
+rust/models/
+*.onnx
+*.pt
+
+# ── Private ──
+cloud/
+docker-compose.yml
+DEVELOPMENT.md
+Makefile.deploy
+PROJECT.md

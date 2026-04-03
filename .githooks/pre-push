@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+#
+# pre-push hook: blocks proprietary files from being pushed to GitHub.
+# Reads blocked paths from .github-ignore (one per line).
+# Pushes to any non-GitHub remote pass through unchecked.
+#
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+REMOTE_NAME="$1"
+REMOTE_URL="$2"
+
+# Only guard pushes to GitHub
+if [[ "$REMOTE_URL" != *"github.com"* && "$REMOTE_NAME" != "github" ]]; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+IGNORE_FILE="$REPO_ROOT/.github-ignore"
+
+if [[ ! -f "$IGNORE_FILE" ]]; then
+    exit 0
+fi
+
+# Read blocked patterns (skip comments and blank lines)
+BLOCKED=()
+while IFS= read -r line; do
+    line="${line%%#*}"       # strip inline comments
+    line="${line// /}"       # strip spaces
+    [[ -z "$line" ]] && continue
+    BLOCKED+=("$line")
+done < "$IGNORE_FILE"
+
+if [[ ${#BLOCKED[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+VIOLATIONS=()
+
+while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+    [[ -z "$LOCAL_SHA" ]] && continue
+    # skip delete pushes
+    if [[ "$LOCAL_SHA" == "0000000000000000000000000000000000000000" ]]; then
+        continue
+    fi
+
+    if [[ "$REMOTE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+        # New branch — check all commits
+        RANGE="$LOCAL_SHA"
+    else
+        RANGE="$REMOTE_SHA..$LOCAL_SHA"
+    fi
+
+    # Get files ADDED or MODIFIED in the push range (not deletions)
+    FILES=$(git diff --diff-filter=ACMR --name-only "$RANGE" 2>/dev/null || git diff-tree --no-commit-id --diff-filter=ACMR --name-only -r "$LOCAL_SHA" 2>/dev/null || true)
+
+    for file in $FILES; do
+        for pattern in "${BLOCKED[@]}"; do
+            # Directory pattern (trailing slash): match prefix
+            if [[ "$pattern" == */ ]]; then
+                if [[ "$file" == "${pattern}"* ]]; then
+                    VIOLATIONS+=("  $file  (blocked by: $pattern)")
+                fi
+            else
+                # Exact file match
+                if [[ "$file" == "$pattern" ]]; then
+                    VIOLATIONS+=("  $file  (blocked by: $pattern)")
+                fi
+            fi
+        done
+    done
+done
+
+if [[ ${#VIOLATIONS[@]} -gt 0 ]]; then
+    echo ""
+    echo "=========================================="
+    echo "  PUSH BLOCKED — proprietary files detected"
+    echo "=========================================="
+    echo ""
+    echo "The following files must NOT be pushed to GitHub:"
+    echo ""
+    for v in "${VIOLATIONS[@]}"; do
+        echo "$v"
+    done
+    echo ""
+    echo "These paths are listed in .github-ignore."
+    echo ""
+    exit 1
+fi
+
+exit 0

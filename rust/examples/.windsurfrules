@@ -1,0 +1,17 @@
+# better-ctx — Token Optimization
+
+better-ctx is configured as an MCP server. Always use better-ctx MCP tools instead of built-in tools:
+
+- Read files → `ctx_read(path, mode)` instead of built-in Read
+- Shell commands → `ctx_shell(command)` instead of built-in Shell
+- Search code → `ctx_search(pattern, path)` instead of built-in Grep
+- List directories → `ctx_tree(path, depth)` instead of ls/find
+
+ctx_read modes: full (cached, for files you edit), map (deps+API, context-only), signatures, diff, aggressive, entropy.
+
+For shell commands without MCP equivalents, prefix with `better-ctx -c`:
+- `better-ctx -c git status` instead of `git status`
+- `better-ctx -c cargo test` instead of `cargo test`
+- `better-ctx -c npm install` instead of `npm install`
+
+Write, StrReplace, Delete have no better-ctx equivalent — use them normally.

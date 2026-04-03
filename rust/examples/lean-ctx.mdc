@@ -1,0 +1,99 @@
+---
+description: Token optimization via better-ctx Hybrid (Shell Hook + MCP)
+globs: **/*
+alwaysApply: true
+---
+
+# better-ctx MCP Tools
+
+Always use better-ctx MCP tools. Never use the standard equivalents.
+
+## Tool Mapping
+
+| Instead of | Use | Why |
+|---|-----|-----|
+| `Read` | `ctx_read` | Session caching, 6 compression modes, re-reads cost ~13 tokens |
+| `Shell` | `ctx_shell` | Pattern-based compression for git, npm, cargo, docker, tsc |
+| `Grep` | `ctx_search` | Compact context, token-efficient results |
+| `ls`, `find` | `ctx_tree` | Compact directory maps with file counts |
+
+## ctx_read Modes
+
+- `full` — default, cached read (use for files you will edit)
+- `map` — dependency graph + exports + API signatures (use for context-only files)
+- `signatures` — API surface only (tree-sitter AST for 14 languages)
+- `diff` — changed lines only (use after edits)
+- `aggressive` — syntax stripped
+- `entropy` — Shannon + Jaccard filtering
+
+Re-reads cost ~13 tokens. File refs F1, F2.. persist across the session.
+
+Set `fresh=true` on ctx_read to bypass cache. Use when: spawned as a subagent, after context compaction, or if you see a [cached] response but do not have the file content in your context.
+
+## Default Strategy
+
+- Reading for context → `map`
+- Reading to understand API → `signatures`
+- Reading to edit → `full`
+- Re-reading → just call `full` again (cache returns ~13 tokens)
+
+## v2.3.0 Scientific Features (automatic)
+
+- **Auto-Delta** — re-reading a changed file sends only the diff (98.9% savings)
+- **Bayesian Mode Selection** — learns optimal mode per file type over time
+- **BPE Entropy** — entropy filtering uses LLM tokenizer for precision
+- **Cross-File Dedup** — `ctx_dedup` with `action=apply` replaces shared blocks with references
+- **Boltzmann Cache** — evicts least-valuable entries when token budget exceeded
+- **LITM Profiles** — context positioned optimally per LLM model (Claude/GPT/Gemini)
+
+## Session Management
+
+- `ctx_compress` at >10 turns — creates memory checkpoint
+- `ctx_metrics` — hard numbers on what was saved
+- `ctx_benchmark` — find optimal mode for a file
+- `ctx_session load` — on new chat, restore previous session
+- `ctx_dedup` — analyze or apply cross-file deduplication
+
+## Proactive Tools
+
+Use without being asked:
+- `ctx_compress` — when context grows large, create checkpoint
+- `ctx_metrics` — periodically verify token savings
+
+## Write, StrReplace, Delete, Glob
+
+These have no better-ctx equivalent — use them normally.
+
+## CRP v2 — Compact Response Protocol
+
+Every token costs money. This applies to input, output, AND thinking tokens.
+
+### Thinking Reduction (saves 30-60% thinking tokens)
+
+1. Parse task first, then act. Don't explore when you already know the answer.
+2. One hypothesis, test it. Don't enumerate 5 approaches — pick the most likely, try it.
+3. Stop thinking when you have the answer.
+4. Use structured context. better-ctx headers tell you deps/exports — don't re-read files to find imports.
+5. File ref tracking: F1=auth.ts means F1 everywhere in this session.
+
+### Output Reduction (saves 50-80% output tokens)
+
+1. NO prose. Just code and results.
+2. NO echoing content that was just read.
+3. Summarize tool results: 1 line max.
+4. Show edits only — not surrounding unchanged code.
+5. Batch tool calls. One message, multiple calls.
+6. Never ask "shall I proceed?" — just do it.
+7. Bullets > paragraphs. Tables > lists.
+
+### Compact Notation
+
+- `F:path` — reading file
+- `+file` = created, `~file` = modified, `!file` = error
+- `->` for results: "Built -> 18 pages, 0 errors"
+
+## Model Selection
+
+- Grep/search/explore → `model: "fast"`
+- Simple edits (rename, add field, fix typo) → `model: "fast"`
+- Multi-file refactors, architecture → default model

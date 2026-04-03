@@ -1,0 +1,138 @@
+name: Security Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for dangerous patterns
+        run: |
+          echo "## Security Pattern Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          FOUND=0
+
+          # Check for network operations (better-ctx should be local-only)
+          if grep -rn 'reqwest::' rust/src/ 2>/dev/null; then
+            echo "::warning::Found reqwest usage — better-ctx should not make network requests"
+            echo "- ⚠️ Found reqwest usage" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+          if grep -rn 'hyper::' rust/src/ 2>/dev/null; then
+            echo "::warning::Found hyper usage — better-ctx should not make network requests"
+            echo "- ⚠️ Found hyper usage" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+          if grep -rn 'std::net::Tcp' rust/src/ 2>/dev/null; then
+            echo "::warning::Found TCP networking — better-ctx should be local-only"
+            echo "- ⚠️ Found TCP networking" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+
+          # Check for unsafe code
+          UNSAFE_COUNT=$(grep -rn 'unsafe {' rust/src/ 2>/dev/null | wc -l)
+          if [ "$UNSAFE_COUNT" -gt 0 ]; then
+            echo "::warning::Found $UNSAFE_COUNT unsafe blocks"
+            echo "- ⚠️ Found $UNSAFE_COUNT unsafe blocks" >> $GITHUB_STEP_SUMMARY
+            grep -rn 'unsafe {' rust/src/ >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+
+          # Check for environment manipulation
+          if grep -rn '\.env("LD_PRELOAD")' rust/src/ 2>/dev/null; then
+            echo "::error::Found LD_PRELOAD manipulation — potential library hijacking"
+            echo "- ❌ Found LD_PRELOAD manipulation" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+          if grep -rn '\.env("DYLD_' rust/src/ 2>/dev/null; then
+            echo "::error::Found DYLD manipulation — potential library hijacking"
+            echo "- ❌ Found DYLD manipulation" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+
+          # Check for hardcoded secrets patterns
+          if grep -rn 'sk_live_\|sk_test_\|AKIA[0-9A-Z]\|ghp_[a-zA-Z0-9]' rust/src/ 2>/dev/null; then
+            echo "::error::Found potential hardcoded secrets"
+            echo "- ❌ Found potential hardcoded secrets" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+
+          # Check for shell injection vectors
+          SHELL_INJECT=$(grep -rn 'Command::new("sh")\.arg("-c")\.arg(format!' rust/src/ 2>/dev/null | wc -l)
+          if [ "$SHELL_INJECT" -gt 0 ]; then
+            echo "::warning::Found $SHELL_INJECT potential shell injection vectors"
+            echo "- ⚠️ Found $SHELL_INJECT shell injection patterns" >> $GITHUB_STEP_SUMMARY
+            FOUND=1
+          fi
+
+          # Check for unwrap() in production code (excluding tests)
+          UNWRAP_COUNT=$(grep -rn '\.unwrap()' rust/src/ 2>/dev/null | grep -v '#\[test\]' | grep -v 'mod tests' | wc -l)
+          echo "- ℹ️ Found $UNWRAP_COUNT .unwrap() calls in src/" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ No dangerous patterns detected" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Proprietary code guardrail
+        run: |
+          echo "## Proprietary Code Guard" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          LEAK=0
+
+          PRIVATE_PATHS="cloud/ docker-compose.yml .gitlab-ci.yml deploy.sh DEVELOPMENT.md Makefile.deploy"
+          for path in $PRIVATE_PATHS; do
+            if [ -e "$path" ]; then
+              echo "::error::PROPRIETARY CODE DETECTED: $path exists in the GitHub repository!"
+              echo "- **$path** — must not be on GitHub" >> $GITHUB_STEP_SUMMARY
+              LEAK=1
+            fi
+          done
+
+          if [ "$LEAK" -eq 1 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "These paths belong on GitLab only. See .github-ignore." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "No proprietary code found." >> $GITHUB_STEP_SUMMARY
+
+      - name: Critical files check
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "## Critical Files Modified" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          CRITICAL_FILES="rust/src/shell.rs rust/src/server.rs rust/src/hooks.rs rust/src/core/cache.rs rust/Cargo.toml .github/workflows"
+          FOUND_CRITICAL=0
+
+          for file in $CRITICAL_FILES; do
+            if git diff --name-only origin/main...HEAD | grep -q "$file"; then
+              echo "- ⚠️ **$file** modified (requires security review)" >> $GITHUB_STEP_SUMMARY
+              FOUND_CRITICAL=1
+            fi
+          done
+
+          if [ "$FOUND_CRITICAL" -eq 0 ]; then
+            echo "✅ No critical files modified" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Dependency audit
+        run: |
+          cargo install cargo-audit
+          cd rust && cargo audit 2>&1 | tee audit-output.txt
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Dependency Audit" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat audit-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

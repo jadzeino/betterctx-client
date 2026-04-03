@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# bctx — better-ctx launcher for AI coding agents
+#
+# Usage:
+#   bctx                              # auto-detect agent, current dir
+#   bctx --agent claude               # start Claude Code
+#   bctx --agent cursor               # configure Cursor
+#   bctx --agent gemini               # start Gemini CLI
+#   bctx --agent codex                # configure Codex
+#   bctx --agent windsurf             # configure Windsurf
+#   bctx --scan-only                  # build graph only
+#   bctx /path/to/project             # specific project
+#   bctx /path/to/project "prompt"    # with initial prompt (Claude only)
+#   bctx --resume ID                  # resume Claude session
+set -euo pipefail
+
+LEAN_CTX=""
+AGENT=""
+PROJECT_DIR=""
+PROMPT=""
+RESUME_ID=""
+SCAN_ONLY=false
+
+find_better_ctx() {
+  if command -v better-ctx &>/dev/null; then
+    LEAN_CTX="$(command -v better-ctx)"
+  elif [[ -x "${SCRIPT_DIR}/../rust/target/release/better-ctx" ]]; then
+    LEAN_CTX="${SCRIPT_DIR}/../rust/target/release/better-ctx"
+  else
+    echo "Error: better-ctx not found."
+    echo "Install: cargo install better-ctx"
+    echo "     or: curl -fsSL https://raw.githubusercontent.com/jadzeino/betterctx-client/main/install.sh | bash -s -- --download"
+    exit 1
+  fi
+}
+
+detect_agent() {
+  if [[ -n "$AGENT" ]]; then return; fi
+
+  if command -v claude &>/dev/null && [[ -d "$HOME/.claude" ]]; then
+    AGENT="claude"
+  elif [[ -d "$HOME/.cursor" ]]; then
+    AGENT="cursor"
+  elif command -v gemini &>/dev/null || [[ -d "$HOME/.gemini" ]]; then
+    AGENT="gemini"
+  elif command -v codex &>/dev/null || [[ -d "$HOME/.codex" ]]; then
+    AGENT="codex"
+  else
+    AGENT="claude"
+  fi
+
+  echo "Auto-detected agent: $AGENT"
+}
+
+find_project_root() {
+  if [[ -n "$PROJECT_DIR" ]]; then return; fi
+
+  if git rev-parse --show-toplevel &>/dev/null 2>&1; then
+    PROJECT_DIR="$(git rev-parse --show-toplevel)"
+  else
+    PROJECT_DIR="$(pwd)"
+  fi
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent|-a)
+      AGENT="$2"; shift 2 ;;
+    --resume|-r)
+      RESUME_ID="$2"; shift 2 ;;
+    --scan-only)
+      SCAN_ONLY=true; shift ;;
+    --help|-h)
+      echo "Usage: bctx [options] [project_dir] [prompt]"
+      echo ""
+      echo "Options:"
+      echo "  --agent, -a NAME    Agent to use: claude|cursor|gemini|codex|windsurf|cline"
+      echo "  --resume, -r ID     Resume Claude Code session"
+      echo "  --scan-only         Build project graph only, don't launch agent"
+      echo "  --help, -h          Show this help"
+      echo ""
+      echo "Examples:"
+      echo "  bctx                              # auto-detect, current dir"
+      echo "  bctx --agent claude ~/my-project  # Claude Code on specific project"
+      echo '  bctx ~/my-project "fix auth"      # Claude Code with prompt'
+      echo "  bctx --scan-only                  # just build the graph"
+      exit 0 ;;
+    -*)
+      echo "Unknown option: $1"; exit 1 ;;
+    *)
+      if [[ -z "$PROJECT_DIR" && -d "$1" ]]; then
+        PROJECT_DIR="$(cd "$1" && pwd)"
+      elif [[ -z "$PROMPT" ]]; then
+        PROMPT="$1"
+      else
+        PROMPT="$PROMPT $1"
+      fi
+      shift ;;
+  esac
+done
+
+find_better_ctx
+find_project_root
+echo "Project: $PROJECT_DIR"
+echo "Using:   $LEAN_CTX"
+
+echo ""
+echo "Building project graph..."
+"$LEAN_CTX" -c "$LEAN_CTX graph build" 2>/dev/null \
+  || BETTER_CTX_ACTIVE=1 "$LEAN_CTX" graph build 2>/dev/null \
+  || echo "(graph build skipped — run in MCP mode for full graph)"
+
+if $SCAN_ONLY; then
+  echo "Done (scan only)."
+  exit 0
+fi
+
+detect_agent
+echo ""
+
+case "$AGENT" in
+  claude|claude-code)
+    echo "Setting up better-ctx for Claude Code..."
+    "$LEAN_CTX" init --agent claude --global 2>/dev/null || true
+
+    CLAUDE_ARGS=()
+    if [[ -n "$RESUME_ID" ]]; then
+      CLAUDE_ARGS+=("--resume" "$RESUME_ID")
+    elif [[ -n "$PROMPT" ]]; then
+      CLAUDE_ARGS+=("-p" "$PROMPT")
+    fi
+
+    echo "Launching Claude Code..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cd "$PROJECT_DIR"
+    exec claude ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"} ;;
+
+  cursor)
+    echo "Setting up better-ctx for Cursor..."
+    "$LEAN_CTX" init --agent cursor --global 2>/dev/null || true
+    echo ""
+    echo "Cursor configured. Open your project in Cursor to use better-ctx MCP tools."
+    echo "  cursor $PROJECT_DIR" ;;
+
+  gemini)
+    echo "Setting up better-ctx for Gemini CLI..."
+    "$LEAN_CTX" init --agent gemini --global 2>/dev/null || true
+
+    echo "Launching Gemini CLI..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cd "$PROJECT_DIR"
+    exec gemini ;;
+
+  codex)
+    echo "Setting up better-ctx for Codex..."
+    "$LEAN_CTX" init --agent codex --global 2>/dev/null || true
+    echo ""
+    echo "Codex configured. better-ctx hooks installed." ;;
+
+  windsurf)
+    echo "Setting up better-ctx for Windsurf..."
+    "$LEAN_CTX" init --agent windsurf 2>/dev/null || true
+    echo ""
+    echo "Windsurf configured. Open your project in Windsurf." ;;
+
+  cline|roo)
+    echo "Setting up better-ctx for Cline/Roo..."
+    "$LEAN_CTX" init --agent cline 2>/dev/null || true
+    echo ""
+    echo "Cline configured." ;;
+
+  *)
+    echo "Unknown agent: $AGENT"
+    echo "Supported: claude, cursor, gemini, codex, windsurf, cline"
+    exit 1 ;;
+esac
