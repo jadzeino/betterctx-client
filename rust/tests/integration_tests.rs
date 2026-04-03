@@ -31,7 +31,10 @@ fn binary_prints_help() {
         stdout.contains("Intelligence Layer"),
         "help should contain tagline"
     );
-    assert!(stdout.contains("better-ctx"), "help should mention better-ctx");
+    assert!(
+        stdout.contains("better-ctx"),
+        "help should mention better-ctx"
+    );
 }
 
 #[test]

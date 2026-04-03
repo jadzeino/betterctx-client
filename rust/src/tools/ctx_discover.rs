@@ -216,7 +216,8 @@ pub fn format_cli_output(result: &DiscoverResult) -> String {
         result.already_optimized
     ));
     lines.push(String::new());
-    lines.push("Run 'better-ctx init --global' to enable compression for all commands.".to_string());
+    lines
+        .push("Run 'better-ctx init --global' to enable compression for all commands.".to_string());
 
     lines.join("\n")
 }

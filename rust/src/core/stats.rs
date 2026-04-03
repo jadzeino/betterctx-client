@@ -851,7 +851,10 @@ pub fn format_gain_themed(t: &Theme) -> String {
     o.push(format!("  {ln}", ln = t.border_line(w)));
     o.push(String::new());
     let lbl_w = 20;
-    let lbl_without = theme::pad_right(&format!("{m}Without better-ctx{r}", m = t.muted.fg()), lbl_w);
+    let lbl_without = theme::pad_right(
+        &format!("{m}Without better-ctx{r}", m = t.muted.fg()),
+        lbl_w,
+    );
     let lbl_with = theme::pad_right(&format!("{m}With better-ctx{r}", m = t.muted.fg()), lbl_w);
     let lbl_saved = theme::pad_right(&format!("{c}{b}You saved{r}", c = t.success.fg()), lbl_w);
 

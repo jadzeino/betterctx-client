@@ -244,7 +244,10 @@ impl ProjectKnowledge {
 
 fn knowledge_dir(project_hash: &str) -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    Ok(home.join(".better-ctx").join("knowledge").join(project_hash))
+    Ok(home
+        .join(".better-ctx")
+        .join("knowledge")
+        .join(project_hash))
 }
 
 fn hash_project_root(root: &str) -> String {

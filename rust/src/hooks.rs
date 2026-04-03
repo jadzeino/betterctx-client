@@ -26,7 +26,10 @@ pub fn refresh_installed_hooks() {
         install_gemini_hook_scripts(&home);
     }
 
-    if home.join(".codex/hooks/better-ctx-rewrite-codex.sh").exists() {
+    if home
+        .join(".codex/hooks/better-ctx-rewrite-codex.sh")
+        .exists()
+    {
         install_codex_hook_scripts(&home);
     }
 }
