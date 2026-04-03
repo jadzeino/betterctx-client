@@ -141,3 +141,20 @@ jobs:
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew formula
+    needs: [release, publish-npm, publish-crates]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Trigger homebrew-better-ctx update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_DISPATCH_TOKEN }}
+          repository: jadzeino/homebrew-better-ctx
+          event-type: new-release
+          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
