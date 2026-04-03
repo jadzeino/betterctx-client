@@ -2,8 +2,6 @@
 # Sync latest changes from lean-ctx upstream into betterctx-client
 # Run this whenever yvgude pushes new changes:  bash sync-upstream.sh
 
-set -e
-
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 REBRAND_SCRIPT="/Users/azeno/Desktop/wayToGO/rebrand-inplace.sh"
 
@@ -56,22 +54,39 @@ fi
 # ── Merge ─────────────────────────────────────────────────────────────────────
 echo ""
 echo "==> Merging upstream/main..."
-git merge upstream/main --no-edit -m "chore: merge upstream lean-ctx v$UPSTREAM_VERSION"
+if ! git merge upstream/main --no-edit -m "chore: merge upstream lean-ctx v$UPSTREAM_VERSION" 2>&1; then
+  echo ""
+  echo "❌ MERGE CONFLICT detected."
+  echo ""
+  echo "   Files with conflicts:"
+  git diff --name-only --diff-filter=U
+  echo ""
+  echo "   What to do:"
+  echo "   1. Open each conflicting file in your editor"
+  echo "   2. Look for <<<<<<< HEAD markers and resolve them"
+  echo "      - Keep YOUR changes (betterctx branding etc)"
+  echo "      - Take HIS new feature code"
+  echo "   3. After resolving all files run:"
+  echo "      git add -A"
+  echo "      git commit -m 'chore: merge upstream lean-ctx v$UPSTREAM_VERSION'"
+  echo "      bash sync-upstream.sh --skip-merge"
+  echo ""
+  echo "   Tip: Run 'git status' to see which files still need resolving."
+  exit 1
+fi
 
 # ── Rebrand ───────────────────────────────────────────────────────────────────
 echo ""
 echo "==> Re-applying betterctx rebranding..."
 bash "$REBRAND_SCRIPT" "$REPO_DIR"
 
-# ── Version bump in Cargo.toml and package.json files ─────────────────────────
+# ── Version bump ──────────────────────────────────────────────────────────────
 if [ "$VERSION_CHANGED" = true ]; then
   echo ""
   echo "==> Updating version to $UPSTREAM_VERSION in all package files..."
 
-  # Cargo.toml
   sed -i '' "s/^version = \"$LOCAL_VERSION\"/version = \"$UPSTREAM_VERSION\"/" rust/Cargo.toml
 
-  # npm packages
   for pkg in packages/better-ctx-bin packages/pi-better-ctx; do
     if [ -f "$pkg/package.json" ]; then
       sed -i '' "s/\"version\": \"$LOCAL_VERSION\"/\"version\": \"$UPSTREAM_VERSION\"/" "$pkg/package.json"
@@ -89,20 +104,32 @@ git diff --cached --quiet || git commit -m "chore: sync upstream lean-ctx v$UPST
 # ── Push ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "==> Pushing to origin..."
-git push origin main
+if ! git push origin main 2>&1; then
+  echo ""
+  echo "❌ Push failed. Try:"
+  echo "   ssh-add --apple-use-keychain ~/.ssh/id_ed25519"
+  echo "   git push origin main"
+  exit 1
+fi
 
 # ── Tag new version ───────────────────────────────────────────────────────────
 if [ "$VERSION_CHANGED" = true ]; then
   echo ""
-  echo "==> New version detected. Creating release tag v$UPSTREAM_VERSION..."
+  echo "==> Creating release tag v$UPSTREAM_VERSION..."
   git tag "v$UPSTREAM_VERSION"
-  git push origin "v$UPSTREAM_VERSION"
+  if ! git push origin "v$UPSTREAM_VERSION" 2>&1; then
+    echo "❌ Tag push failed. Try:"
+    echo "   ssh-add --apple-use-keychain ~/.ssh/id_ed25519"
+    echo "   git push origin v$UPSTREAM_VERSION"
+    exit 1
+  fi
   echo ""
   echo "🚀 Tag v$UPSTREAM_VERSION pushed — GitHub Actions will now:"
   echo "   • Build binaries for all 6 platforms"
   echo "   • Create GitHub Release"
   echo "   • Publish to crates.io"
   echo "   • Publish to npm (better-ctx-bin + pi-better-ctx)"
+  echo "   • Update Homebrew formula"
 fi
 
 echo ""
@@ -110,5 +137,5 @@ echo "✅ Sync complete."
 if [ -n "$API_DIFF" ]; then
   echo ""
   echo "⚠️  ACTION REQUIRED: API changes detected in cloud_client.rs"
-  echo "   Review and update your betterctx-api backend before releasing."
+  echo "   Review and update your betterctx-api backend before users upgrade."
 fi
