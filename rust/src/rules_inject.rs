@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 const MARKER: &str = "# better-ctx — Context Engineering Layer";
 const END_MARKER: &str = "<!-- /better-ctx -->";
-const RULES_VERSION: &str = "better-ctx-rules-v5";
+const RULES_VERSION: &str = "better-ctx-rules-v7";
 
 // ---------------------------------------------------------------------------
 // Rules content for SHARED config files (appended to user's existing config).
@@ -10,20 +10,20 @@ const RULES_VERSION: &str = "better-ctx-rules-v5";
 // Used for: CLAUDE.md, instructions.md, GEMINI.md, copilot-instructions.md
 // ---------------------------------------------------------------------------
 const RULES_SHARED: &str = r#"# better-ctx — Context Engineering Layer
-<!-- better-ctx-rules-v5 -->
+<!-- better-ctx-rules-v7 -->
 
-MANDATORY: Use better-ctx MCP tools for ALL reads and searches. Native Read/Grep/Shell are FORBIDDEN.
+PREFER better-ctx MCP tools over native equivalents for token savings:
 
-| FORBIDDEN | USE INSTEAD |
-|-----------|-------------|
-| `Read` / `cat` / `head` / `tail` | `ctx_read(path)` — cached, 8 compression modes |
-| `Shell` / `bash` / terminal | `ctx_shell(command)` — pattern compression |
-| `Grep` / `rg` / search | `ctx_search(pattern, path)` — compact results |
-| `ls` / `find` / `tree` | `ctx_tree(path, depth)` — directory maps |
+| PREFER | OVER | Why |
+|--------|------|-----|
+| `ctx_read(path)` | `Read` / `cat` | Cached, 8 compression modes, re-reads ~13 tokens |
+| `ctx_shell(command)` | `Shell` / `bash` | Pattern compression for git/npm/cargo output |
+| `ctx_search(pattern, path)` | `Grep` / `rg` | Compact, token-efficient results |
+| `ctx_tree(path, depth)` | `ls` / `find` | Compact directory maps |
+| `ctx_edit(path, old_string, new_string)` | `Edit` (when Read unavailable) | Search-and-replace without native Read |
 
-Keep using Write, StrReplace, Delete, Glob normally (no better-ctx replacement).
-
-REMINDER: NEVER use Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ctx_search, ctx_tree.
+Edit files: use native Edit/StrReplace if available. If Edit requires Read and Read is unavailable, use ctx_edit.
+Write, Delete, Glob → use normally. NEVER loop on Edit failures — switch to ctx_edit immediately.
 <!-- /better-ctx -->"#;
 
 // ---------------------------------------------------------------------------
@@ -32,17 +32,18 @@ REMINDER: NEVER use Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ct
 // Used for: Windsurf, Zed, Cline, Roo Code, OpenCode, Continue, Aider
 // ---------------------------------------------------------------------------
 const RULES_DEDICATED: &str = r#"# better-ctx — Context Engineering Layer
-<!-- better-ctx-rules-v5 -->
+<!-- better-ctx-rules-v7 -->
 
-MANDATORY: Use better-ctx MCP tools for ALL reads and searches. Native Read/Grep/Shell are FORBIDDEN.
+PREFER better-ctx MCP tools over native equivalents for token savings:
 
-## Tool replacements (MUST use):
-| FORBIDDEN | USE INSTEAD | Why |
-|-----------|-------------|-----|
-| `Read` / `cat` / `head` | `ctx_read(path)` | Cached, 8 compression modes, re-reads ~13 tokens |
-| `Shell` / `bash` | `ctx_shell(command)` | Pattern compression for git/npm/cargo output |
-| `Grep` / `rg` | `ctx_search(pattern, path)` | Compact, token-efficient results |
-| `ls` / `find` | `ctx_tree(path, depth)` | Compact directory maps |
+## Tool preference:
+| PREFER | OVER | Why |
+|--------|------|-----|
+| `ctx_read(path)` | `Read` / `cat` | Cached, 8 compression modes, re-reads ~13 tokens |
+| `ctx_shell(command)` | `Shell` / `bash` | Pattern compression for git/npm/cargo output |
+| `ctx_search(pattern, path)` | `Grep` / `rg` | Compact, token-efficient results |
+| `ctx_tree(path, depth)` | `ls` / `find` | Compact directory maps |
+| `ctx_edit(path, old_string, new_string)` | `Edit` (when Read unavailable) | Search-and-replace without native Read |
 
 ## ctx_read modes:
 - `full` — cached read (files you edit)
@@ -51,14 +52,13 @@ MANDATORY: Use better-ctx MCP tools for ALL reads and searches. Native Read/Grep
 - `diff` — changed lines after edits
 - `lines:N-M` — specific range
 
-## Keep using (no better-ctx replacement):
-Write, StrReplace, Delete, Glob — use normally.
+## File editing:
+Use native Edit/StrReplace if available. If Edit requires Read and Read is unavailable, use ctx_edit.
+Write, Delete, Glob → use normally. NEVER loop on Edit failures — switch to ctx_edit immediately.
 
 ## Proactive (use without being asked):
 - `ctx_overview(task)` at session start
 - `ctx_compress` when context grows large
-
-REMINDER: NEVER use Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ctx_search, ctx_tree.
 <!-- /better-ctx -->"#;
 
 // ---------------------------------------------------------------------------
@@ -67,23 +67,24 @@ REMINDER: NEVER use Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ct
 // LITM-optimized: critical warning at top and bottom.
 // ---------------------------------------------------------------------------
 const RULES_CURSOR_MDC: &str = r#"---
-description: "better-ctx: ALWAYS use ctx_read/ctx_shell/ctx_search/ctx_tree instead of Read/Shell/Grep/ls"
+description: "better-ctx: prefer ctx_read/ctx_shell/ctx_search/ctx_tree over Read/Shell/Grep/ls for token savings"
 alwaysApply: true
 ---
 
 # better-ctx — Context Engineering Layer
-<!-- better-ctx-rules-v5 -->
+<!-- better-ctx-rules-v7 -->
 
-CRITICAL: NEVER use native Read, Shell, Grep, or ls tools. ALWAYS use better-ctx MCP equivalents below.
+PREFER better-ctx MCP tools over native equivalents for token savings:
 
-## Tool Mapping (MANDATORY)
+## Tool Mapping
 
-| FORBIDDEN | USE INSTEAD | Why |
-|-----------|-------------|-----|
-| `Read` | `ctx_read` | Session caching, 8 compression modes, re-reads cost ~13 tokens |
-| `Shell` | `ctx_shell` | Pattern-based compression for git, npm, cargo, docker, tsc |
-| `Grep` | `ctx_search` | Compact context, token-efficient results |
-| `ls`, `find` | `ctx_tree` | Compact directory maps with file counts |
+| PREFER | OVER | Why |
+|--------|------|-----|
+| `ctx_read` | `Read` | Session caching, 8 compression modes, re-reads cost ~13 tokens |
+| `ctx_shell` | `Shell` | Pattern-based compression for git, npm, cargo, docker, tsc |
+| `ctx_search` | `Grep` | Compact context, token-efficient results |
+| `ctx_tree` | `ls`, `find` | Compact directory maps with file counts |
+| `ctx_edit` | `Edit` (when Read unavailable) | Search-and-replace without native Read dependency |
 
 ## ctx_read Modes
 
@@ -93,16 +94,12 @@ CRITICAL: NEVER use native Read, Shell, Grep, or ls tools. ALWAYS use better-ctx
 - `diff` — changed lines only (use after edits)
 - `lines:N-M` — specific range
 
-## Rules
+## File editing
 
-- Use `ctx_read(path, mode="full")` for every file read before editing
-- Use `ctx_read(path, mode="map")` for files you only need as context
-- Use `ctx_shell(cmd)` for every shell command
-- Use `ctx_search(pattern, path)` instead of Grep
-- Use `ctx_tree` instead of `ls` or `find` for directory exploration
-- The `Write`, `StrReplace`, `Delete`, `Glob` tools have no better-ctx equivalent — use them normally
-
-REMINDER: NEVER use native Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ctx_search, ctx_tree. Every single time.
+- Use native Edit/StrReplace when available.
+- If Edit requires native Read and Read is unavailable: use `ctx_edit(path, old_string, new_string)` instead.
+- NEVER loop trying to make Edit work. If it fails, switch to ctx_edit immediately.
+- Write, Delete, Glob → use normally.
 <!-- /better-ctx -->"#;
 
 // ---------------------------------------------------------------------------
@@ -571,13 +568,13 @@ mod tests {
         let lines: Vec<&str> = RULES_SHARED.lines().collect();
         let first_5 = lines[..5.min(lines.len())].join("\n");
         assert!(
-            first_5.contains("MANDATORY") || first_5.contains("FORBIDDEN"),
-            "LITM: critical instruction must be near start"
+            first_5.contains("PREFER") || first_5.contains("better-ctx"),
+            "LITM: preference instruction must be near start"
         );
         let last_5 = lines[lines.len().saturating_sub(5)..].join("\n");
         assert!(
-            last_5.contains("REMINDER") || last_5.contains("NEVER"),
-            "LITM: reminder must be near end"
+            last_5.contains("fallback") || last_5.contains("native"),
+            "LITM: fallback note must be near end"
         );
     }
 
@@ -595,13 +592,13 @@ mod tests {
         let lines: Vec<&str> = RULES_DEDICATED.lines().collect();
         let first_5 = lines[..5.min(lines.len())].join("\n");
         assert!(
-            first_5.contains("MANDATORY") || first_5.contains("FORBIDDEN"),
-            "LITM: critical instruction must be near start"
+            first_5.contains("PREFER") || first_5.contains("better-ctx"),
+            "LITM: preference instruction must be near start"
         );
         let last_5 = lines[lines.len().saturating_sub(5)..].join("\n");
         assert!(
-            last_5.contains("REMINDER") || last_5.contains("NEVER"),
-            "LITM: reminder must be near end"
+            last_5.contains("fallback") || last_5.contains("ctx_compress"),
+            "LITM: practical note must be near end"
         );
     }
 
@@ -610,13 +607,13 @@ mod tests {
         let lines: Vec<&str> = RULES_CURSOR_MDC.lines().collect();
         let first_10 = lines[..10.min(lines.len())].join("\n");
         assert!(
-            first_10.contains("CRITICAL") || first_10.contains("NEVER"),
-            "LITM: critical instruction must be near start of MDC"
+            first_10.contains("PREFER") || first_10.contains("better-ctx"),
+            "LITM: preference instruction must be near start of MDC"
         );
         let last_5 = lines[lines.len().saturating_sub(5)..].join("\n");
         assert!(
-            last_5.contains("REMINDER") || last_5.contains("NEVER"),
-            "LITM: reminder must be near end of MDC"
+            last_5.contains("fallback") || last_5.contains("native"),
+            "LITM: fallback note must be near end of MDC"
         );
     }
 

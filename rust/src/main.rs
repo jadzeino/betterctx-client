@@ -262,7 +262,10 @@ fn run_mcp_server() -> Result<()> {
             .with_writer(std::io::stderr)
             .init();
 
-        tracing::info!("better-ctx v2.16.2 MCP server starting");
+        tracing::info!(
+            "better-ctx v{} MCP server starting",
+            env!("CARGO_PKG_VERSION")
+        );
 
         let server = tools::create_server();
         let transport =
@@ -299,7 +302,7 @@ fn shell_quote(s: &str) -> String {
 
 fn print_help() {
     println!(
-        "better-ctx 2.16.2 — The Intelligence Layer for AI Coding
+        "better-ctx {version} — The Intelligence Layer for AI Coding
 
 90+ compression patterns | 25 MCP tools | Context Continuity Protocol
 
@@ -421,7 +424,8 @@ TROUBLESHOOTING:
 
 WEBSITE: https://betterctx.com
 GITHUB:  https://github.com/jadzeino/betterctx-client
-"
+",
+        version = env!("CARGO_PKG_VERSION"),
     );
 }
 
@@ -739,7 +743,10 @@ fn print_gain_with_logo() {
     print!("{output}");
     let d = core::theme::dim();
     let r = core::theme::rst();
-    println!("  {d}better-ctx v2.16.2  |  betterctx.com  |  better-ctx dashboard{r}");
+    println!(
+        "  {d}better-ctx v{}  |  betterctx.com  |  better-ctx dashboard{r}",
+        env!("CARGO_PKG_VERSION")
+    );
     println!();
 
     core::version_check::check_background();
@@ -788,5 +795,6 @@ fn animate_kpi_countup(t: &core::theme::Theme) {
 }
 
 fn cmd_upgrade() {
-    println!("This feature is not yet available. Stay tuned at https://betterctx.com");
+    println!("'upgrade' has been renamed to 'update'. Running 'better-ctx update' instead.\n");
+    core::updater::run(&[]);
 }

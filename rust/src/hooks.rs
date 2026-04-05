@@ -69,6 +69,37 @@ pub fn to_bash_compatible_path(path: &str) -> String {
     }
 }
 
+/// Normalize paths from any client format to a consistent OS-native form.
+/// Handles MSYS2/Git Bash (`/c/Users/...` -> `C:/Users/...`), mixed separators,
+/// double slashes, and trailing slashes. Always uses forward slashes for consistency.
+pub fn normalize_tool_path(path: &str) -> String {
+    let mut p = path.to_string();
+
+    // MSYS2/Git Bash: /c/Users/... -> C:/Users/...
+    if p.len() >= 3
+        && p.starts_with('/')
+        && p.as_bytes()[1].is_ascii_alphabetic()
+        && p.as_bytes()[2] == b'/'
+    {
+        let drive = p.as_bytes()[1].to_ascii_uppercase() as char;
+        p = format!("{drive}:{}", &p[2..]);
+    }
+
+    p = p.replace('\\', "/");
+
+    // Collapse double slashes (preserve UNC paths starting with //)
+    while p.contains("//") && !p.starts_with("//") {
+        p = p.replace("//", "/");
+    }
+
+    // Remove trailing slash (unless root like "/" or "C:/")
+    if p.len() > 1 && p.ends_with('/') && !p.ends_with(":/") {
+        p.pop();
+    }
+
+    p
+}
+
 fn generate_rewrite_script(binary: &str) -> String {
     format!(
         r#"#!/usr/bin/env bash
@@ -231,35 +262,35 @@ pub fn install_project_rules() {
 const AGENTS_MD_TEMPLATE: &str = "\
 # better-ctx — Context Engineering Layer
 
-MANDATORY: Use better-ctx MCP tools for ALL reads, searches, and shell commands.
+PREFER better-ctx MCP tools over native equivalents for token savings:
 
-| FORBIDDEN | USE INSTEAD |
-|-----------|-------------|
-| Read / cat / head / tail | `ctx_read(path)` — cached, 8 compression modes, re-reads ~13 tokens |
-| Shell / bash / terminal | `ctx_shell(command)` — pattern compression for git/npm/cargo output |
-| Grep / rg / search | `ctx_search(pattern, path)` — compact, token-efficient results |
-| ls / find / tree | `ctx_tree(path, depth)` — compact directory maps |
+| PREFER | OVER | Why |
+|--------|------|-----|
+| `ctx_read(path)` | Read / cat / head / tail | Cached, 8 compression modes, re-reads ~13 tokens |
+| `ctx_shell(command)` | Shell / bash / terminal | Pattern compression for git/npm/cargo output |
+| `ctx_search(pattern, path)` | Grep / rg / search | Compact, token-efficient results |
+| `ctx_tree(path, depth)` | ls / find / tree | Compact directory maps |
+| `ctx_edit(path, old_string, new_string)` | Edit (when Read unavailable) | Search-and-replace without native Read |
 
-Keep using Write, StrReplace, Delete, Glob normally (no better-ctx replacement).
-
-REMINDER: NEVER use native Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ctx_search, ctx_tree.
+Edit files: use native Edit/StrReplace if available. If Edit requires Read and Read is unavailable, use ctx_edit.
+Write, Delete, Glob — use normally. NEVER loop on Edit failures — switch to ctx_edit immediately.
 ";
 
 const CURSORRULES_TEMPLATE: &str = "\
 # better-ctx — Context Engineering Layer
 
-CRITICAL: NEVER use native Read, Shell, Grep, or ls tools. ALWAYS use better-ctx MCP equivalents.
+PREFER better-ctx MCP tools over native equivalents for token savings:
 
-| FORBIDDEN | USE INSTEAD |
-|-----------|-------------|
-| `Read` | `ctx_read(path)` — cached, 8 compression modes |
-| `Shell` | `ctx_shell(command)` — pattern compression |
-| `Grep` | `ctx_search(pattern, path)` — compact results |
-| `ls` / `find` | `ctx_tree(path, depth)` — directory maps |
+| PREFER | OVER | Why |
+|--------|------|-----|
+| `ctx_read(path)` | `Read` | Cached, 8 compression modes |
+| `ctx_shell(command)` | `Shell` | Pattern compression |
+| `ctx_search(pattern, path)` | `Grep` | Compact results |
+| `ctx_tree(path, depth)` | `ls` / `find` | Directory maps |
+| `ctx_edit(path, old_string, new_string)` | `Edit` (when Read unavailable) | Search-and-replace without native Read |
 
-Write, StrReplace, Delete, Glob — use normally.
-
-REMINDER: NEVER use native Read, Shell, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ctx_search, ctx_tree.
+Edit files: use native Edit/StrReplace if available. If Edit requires Read and Read is unavailable, use ctx_edit.
+Write, Delete, Glob — use normally. NEVER loop on Edit failures — switch to ctx_edit immediately.
 ";
 
 pub fn install_agent_hook(agent: &str, global: bool) {
@@ -1005,5 +1036,89 @@ mod tests {
     #[test]
     fn bash_path_bare_name_unchanged() {
         assert_eq!(to_bash_compatible_path("better-ctx"), "better-ctx");
+    }
+
+    #[test]
+    fn normalize_msys2_path() {
+        assert_eq!(
+            normalize_tool_path("/c/Users/game/Downloads/project"),
+            "C:/Users/game/Downloads/project"
+        );
+    }
+
+    #[test]
+    fn normalize_msys2_drive_d() {
+        assert_eq!(
+            normalize_tool_path("/d/Projects/app/src"),
+            "D:/Projects/app/src"
+        );
+    }
+
+    #[test]
+    fn normalize_backslashes() {
+        assert_eq!(
+            normalize_tool_path("C:\\Users\\game\\project\\src"),
+            "C:/Users/game/project/src"
+        );
+    }
+
+    #[test]
+    fn normalize_mixed_separators() {
+        assert_eq!(
+            normalize_tool_path("C:\\Users/game\\project/src"),
+            "C:/Users/game/project/src"
+        );
+    }
+
+    #[test]
+    fn normalize_double_slashes() {
+        assert_eq!(
+            normalize_tool_path("/home/user//project///src"),
+            "/home/user/project/src"
+        );
+    }
+
+    #[test]
+    fn normalize_trailing_slash() {
+        assert_eq!(
+            normalize_tool_path("/home/user/project/"),
+            "/home/user/project"
+        );
+    }
+
+    #[test]
+    fn normalize_root_preserved() {
+        assert_eq!(normalize_tool_path("/"), "/");
+    }
+
+    #[test]
+    fn normalize_windows_root_preserved() {
+        assert_eq!(normalize_tool_path("C:/"), "C:/");
+    }
+
+    #[test]
+    fn normalize_unix_path_unchanged() {
+        assert_eq!(
+            normalize_tool_path("/home/user/project/src/main.rs"),
+            "/home/user/project/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn normalize_relative_path_unchanged() {
+        assert_eq!(normalize_tool_path("src/main.rs"), "src/main.rs");
+    }
+
+    #[test]
+    fn normalize_dot_unchanged() {
+        assert_eq!(normalize_tool_path("."), ".");
+    }
+
+    #[test]
+    fn normalize_unc_path_preserved() {
+        assert_eq!(
+            normalize_tool_path("//server/share/file"),
+            "//server/share/file"
+        );
     }
 }

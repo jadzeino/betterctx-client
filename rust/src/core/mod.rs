@@ -9,6 +9,7 @@ pub mod compressor;
 pub mod config;
 pub mod deps;
 pub mod entropy;
+pub mod error;
 pub mod feedback;
 pub mod filters;
 pub mod graph_index;

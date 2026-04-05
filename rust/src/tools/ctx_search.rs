@@ -41,6 +41,7 @@ pub fn handle(
     let mut raw_result_lines = Vec::new();
     let mut files_searched = 0u32;
     let mut files_skipped_size = 0u32;
+    let mut files_skipped_encoding = 0u32;
 
     for entry in walker.filter_map(|e| e.ok()) {
         if entry.file_type().is_none_or(|ft| ft.is_dir()) {
@@ -69,7 +70,10 @@ pub fn handle(
 
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => {
+                files_skipped_encoding += 1;
+                continue;
+            }
         };
 
         files_searched += 1;
@@ -96,6 +100,11 @@ pub fn handle(
         if files_skipped_size > 0 {
             msg.push_str(&format!(" ({files_skipped_size} large files skipped)"));
         }
+        if files_skipped_encoding > 0 {
+            msg.push_str(&format!(
+                " ({files_skipped_encoding} files skipped: binary/encoding)"
+            ));
+        }
         return (msg, 0);
     }
 
@@ -108,6 +117,11 @@ pub fn handle(
 
     if files_skipped_size > 0 {
         result.push_str(&format!("\n({files_skipped_size} files >512KB skipped)"));
+    }
+    if files_skipped_encoding > 0 {
+        result.push_str(&format!(
+            "\n({files_skipped_encoding} files skipped: binary/encoding)"
+        ));
     }
 
     {

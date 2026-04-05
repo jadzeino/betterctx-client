@@ -1,9 +1,11 @@
 pub mod cli;
 pub mod cloud_client;
+pub mod cloud_sync;
 pub mod core;
 pub mod dashboard;
 pub mod doctor;
 pub mod hooks;
+pub mod instructions;
 pub mod mcp_stdio;
 pub mod report;
 pub mod rules_inject;
@@ -11,5 +13,6 @@ pub mod server;
 pub mod setup;
 pub mod shell;
 pub mod terminal_ui;
+pub mod tool_defs;
 pub mod tools;
 pub mod uninstall;

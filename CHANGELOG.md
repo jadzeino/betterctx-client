@@ -3,56 +3,59 @@
 All notable changes to better-ctx are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [2.16.2] — 2026-04-03
+## [2.17.0] — 2026-04-04
 
-### Codex MCP Compatibility
+### Premium Experience Upgrade — Architecture, Performance & Polish
 
-- **feat(mcp)**: Hybrid stdio transport that auto-detects `Content-Length` framing (Codex/LSP-style) vs JSONL (Cursor/Claude/etc.) and responds in the same protocol — contributed by [@JulienJBO](https://github.com/JulienJBO) ([#48](https://github.com/jadzeino/betterctx-client/pull/48))
-- **fix(hooks)**: Suppress Codex hook setup stdout noise during MCP server mode to keep the transport clean
-- 3 new unit tests for JSONL decoding, Content-Length decoding, and framed response encoding
-- New dependencies: `futures`, `tokio-util` (codec), `thiserror`
+Major internal refactoring for long-term maintainability, performance improvements for async I/O, unified error handling, and premium polish across CLI, dashboard, and CI pipeline.
 
-## [2.16.1] — 2026-04-03
+#### Architecture
+- **server.rs split** — Monolithic `server.rs` (1918 lines) split into 4 focused modules: `tool_defs.rs` (620L), `instructions.rs` (159L), `cloud_sync.rs` (136L), `server.rs` (1001L). Each module has a single responsibility.
+- **Centralized error handling** — New `LeanCtxError` enum in `core/error.rs` with `thiserror` derive. `From` impls for `io::Error`, `toml::de::Error`, `serde_json::Error`. `Config::save()` migrated as first consumer.
 
-### Patch Release
+#### Performance
+- **Async I/O for ctx_shell** — `execute_command` wrapped in `tokio::task::spawn_blocking` to prevent blocking the Tokio runtime during shell command execution.
 
-- **fix(report)**: `better-ctx report-issue` now reliably finds the `gh` CLI binary by searching common install locations (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`) and falling back to `which gh`
-- **fix(report)**: Graceful fallback when GitHub labels don't exist yet on the repository
-- **fix(ci)**: Removed unused import causing CI failure with `RUSTFLAGS=-Dwarnings`
-- **feat(gain)**: Added `report-issue` hint to rotating tips in `better-ctx gain`
-- **docs**: Added deploy branch security warnings to DEPLOY_CHECKLIST
+#### CLI
+- **Dynamic version** — All hardcoded version strings replaced with `env!("CARGO_PKG_VERSION")`. Version is now single-sourced from `Cargo.toml`.
+- **report-issue exit code** — Empty title now exits with status 1 for proper script error detection.
+- **Theme migration** — `print_command_box()` migrated from hardcoded ANSI to the `core::theme` system.
+- **upgrade → update** — `better-ctx upgrade` now prints deprecation notice and delegates to `better-ctx update`.
 
-## [2.16.0] — 2026-04-03
+#### Dashboard
+- **Offline fonts** — Removed Google Fonts CDN dependency, switched to system font stacks.
+- **Dynamic version** — Version display fetched from `/api/version` instead of hardcoded.
+- **Empty state UX** — "No data yet" message links to Getting Started guide.
+- **Connection retry** — Auto-retry with clear user message when dashboard API is unavailable.
 
-### Intelligence Layer & Bug Fixes
+#### Setup
+- **Compact doctor** — New `doctor::run_compact()` provides concise diagnostics during `better-ctx setup`, reducing noise for new users.
 
-ctx_search hang fix, built-in issue reporting, graph impact analysis, and the intelligence layer that optimizes output tokens without affecting thinking quality.
+#### Tool Robustness
+- **ctx_search** — Reports count of files skipped due to encoding/permission errors.
+- **ctx_read** — Warns on unknown mode (falls back to `full`). Shows message when cached content is used after file read failure.
+- **ctx_analyze / ctx_benchmark** — `.unwrap()` on `min_by_key` replaced with `if let Some(...)` to prevent potential panics.
 
-### Added
-- **`better-ctx report-issue`** — One-command bug reporting with full diagnostics. Collects 9 sections (environment, config, MCP status, recent tool calls, session state, performance metrics, slow commands, tee logs, project context), anonymizes all paths and secrets, and creates a GitHub issue directly. Supports `--dry-run`, `--include-tee`, `--title`, and `--description` flags. Report is also saved locally to `~/.better-ctx/last-report.md`.
-- **Per-Tool Latency Tracking** — Every MCP tool call over 100ms is now logged to `~/.better-ctx/tool-calls.log` with timestamp, duration, token counts, and mode. Calls exceeding 5 seconds are marked `**SLOW**`. Log is ring-buffered at 50 entries and included in `report-issue` output.
-- **Intelligence Block (Output Efficiency)** — MCP server instructions now include output optimization hints: no-echo (don't repeat tool output), no-narration comments, delta-only code changes. These reduce output tokens by 15–40% without affecting thinking quality. Architecture tasks are explicitly protected: "architecture tasks need thorough analysis".
-- **Task Briefing Pipeline** — Automatic task classification (9 types: Generate, FixBug, Refactor, Explore, Test, Debug, Config, Deploy, Review) with confidence scoring. Each classification carries an `OUTPUT-HINT` directive (CodeOnly, DiffOnly, ExplainConcise, Trace, StepList) that guides the LLM's response format. Injected automatically via the autonomy pipeline on session start.
-- **Report Issue hint in CLI** — `better-ctx` command box now shows `better-ctx report-issue` alongside other commands.
-- **Report Issue link in Dashboard** — Header now includes a "Report Issue" link that copies the CLI command to clipboard.
+#### CI
+- **Deduplicated audit** — Removed redundant `cargo audit` job (handled in `security-check.yml`).
+- **Release tests** — `cargo test --all-features` now runs before release builds in `release.yml`.
 
-### Fixed
-- **ctx_search hanging for minutes** — Root cause: synchronous regex search blocked the Tokio runtime, no file size limits, no max directory depth, incomplete binary file filter. Fix: `spawn_blocking` wrapper with 30-second timeout, 512KB file size limit (`MAX_FILE_SIZE`), max directory depth of 20 (`MAX_WALK_DEPTH`), extended binary extension list (43 types including `.map`, `.snap`, `.db`, `.sqlite`, `.parquet`), and generated file detection (`.min.js`, `.bundle.js`, `.d.ts`, `.js.map`, `.css.map`). Searches that previously hung now complete in <100ms.
-- **`ctx_graph impact` always returning "No files depend on X"** — The graph stored import edges with Rust module paths (`better_ctx::core::cache::SessionCache`) but `impact` compared against file paths (`src/core/cache.rs`). Added `file_path_to_module_prefixes()` converter and `edge_matches_file()` matcher that resolves `crate::`, `super::`, and crate-name prefixes. `ctx_graph impact cache.rs` now correctly reports 17 dependents.
+## [2.16.6] — 2026-04-04
 
-### Changed
-- **Security audit** — Removed all lab-specific references from tracked source code (Ollama `/no_think` directive, lab-only tool comments). Thinking budget instructions are now platform-neutral hints that work across all LLMs.
-- **Test suite cleanup** — Removed 7 machine-dependent throughput benchmarks unsuitable for open-source CI. Fixed hardcoded developer paths in `savings_verification.rs` (now uses `env!("CARGO_MANIFEST_DIR")`). Marked environment-dependent test as `#[ignore]`.
+### ctx_edit — MCP-native file editing with Windows CRLF support
 
-### Performance
-- **462/462** tests pass (362 unit + 100 integration/benchmark)
-- **59%** average token savings in Cursor sessions
-- **91%** compression on `git log --stat` output
-- **98%** compression on `cargo test --no-run` output
-- **<100ms** ctx_search response time (previously minutes/hang)
-- **$0.05** estimated session savings (including thinking token reduction)
+Agents in Windsurf + Claude Code extension loop when Edit requires unavailable Read.
+`ctx_edit` provides search-and-replace as an MCP tool — no native Read/Edit dependency.
 
----
+#### Added
+- **`ctx_edit` MCP tool** — reads, replaces, and writes files in one call. Parameters: `path`, `old_string`, `new_string`, `replace_all`, `create`.
+
+#### Fixed
+- **CRLF/LF auto-normalization** — Windows files with `\r\n` now match when agents send `\n` strings (and vice versa). Line endings are preserved.
+- **Trailing whitespace tolerance** — retries with trimmed trailing whitespace per line if exact match fails.
+- **Edit loop prevention** — instructions say "NEVER loop on Edit failures — use ctx_edit immediately".
+- **PREFER over NEVER** — all injected rules use "PREFER better-ctx tools" instead of "NEVER use native tools".
+- **9 unit tests** covering CRLF, LF, trailing whitespace, and combined scenarios.
 
 ## [2.15.0] — 2026-04-03
 

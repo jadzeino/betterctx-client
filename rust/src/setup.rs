@@ -138,7 +138,7 @@ pub fn run_setup() {
     } else {
         terminal_ui::print_status_ok("~/.better-ctx/ ready");
     }
-    crate::doctor::run();
+    crate::doctor::run_compact();
 
     // Step 5: Data sharing
     terminal_ui::print_step_header(5, 5, "Help Improve better-ctx");
@@ -452,7 +452,7 @@ fn better_ctx_server_entry(binary: &str) -> serde_json::Value {
             "ctx_overview", "ctx_compress", "ctx_metrics", "ctx_session",
             "ctx_knowledge", "ctx_agent", "ctx_analyze", "ctx_benchmark",
             "ctx_cache", "ctx_discover", "ctx_smart_read", "ctx_delta",
-            "ctx_dedup", "ctx_fill", "ctx_intent", "ctx_response",
+            "ctx_edit", "ctx_dedup", "ctx_fill", "ctx_intent", "ctx_response",
             "ctx_context", "ctx_graph", "ctx_wrapped", "ctx_multi_read",
             "ctx_semantic_search", "ctx"
         ]

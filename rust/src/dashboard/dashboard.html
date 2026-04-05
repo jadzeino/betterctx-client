@@ -4,9 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>betterCTX — Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -20,9 +17,9 @@
   --pink:#f472b6;--pink-dim:rgba(244,114,182,0.08);
   --yellow:#fbbf24;--yellow-dim:rgba(251,191,36,0.08);
   --red:#f87171;--red-dim:rgba(248,113,113,0.08);
-  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
-  --display:'Space Grotesk','Inter',sans-serif;
-  --mono:'JetBrains Mono','Fira Code',monospace;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --display:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,'SF Mono','Cascadia Mono','Segoe UI Mono','DejaVu Sans Mono',monospace;
   --r:16px;--rs:10px;
 }
 body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;
@@ -163,9 +160,10 @@ tr:hover td{background:var(--surface-2)}
 <div class="app">
   <header>
     <div style="display:flex;align-items:center;gap:12px">
-      <div class="logo"><h1>Lean<span>CTX</span></h1><span class="ver">v2.16.2</span></div>
+      <div class="logo"><h1>Lean<span>CTX</span></h1><span class="ver" id="ver">v—</span></div>
       <a class="hdr-link" href="https://betterctx.com" target="_blank">betterctx.com</a>
       <a class="hdr-link" href="#" onclick="navigator.clipboard.writeText('better-ctx report-issue');this.textContent='Copied!';setTimeout(()=>this.textContent='Report Issue',2000);return false" title="Copy: better-ctx report-issue">Report Issue</a>
+      <a class="hdr-link" href="#" onclick="navigator.clipboard.writeText('better-ctx contribute');this.textContent='Copied!';setTimeout(()=>this.textContent='Contribute Data',2000);return false" title="Copy: better-ctx contribute">Contribute Data</a>
     </div>
     <div class="hdr-r">
       <div class="fg" id="rf">
@@ -306,7 +304,7 @@ function build(){
 }
 
 function upd(d){
-  if(!d.total_commands){if(built){$('root').innerHTML='<div class="empty"><h2>No data yet</h2><p>Start using betterCTX to see savings.</p></div>';built=false}return}
+  if(!d.total_commands){if(built){$('root').innerHTML='<div class="empty"><h2>No data yet</h2><p>Start using betterCTX tools (ctx_read, ctx_shell, etc.) in your IDE to see savings here.</p><p style="margin-top:12px"><a href="https://betterctx.com/docs/getting-started" style="color:var(--green);text-decoration:none">→ Getting Started Guide</a></p></div>';built=false}return}
   if(!built)build();
 
   const daily=fd(d.daily||[],cR);
@@ -343,12 +341,13 @@ function upd(d){
 }
 
 async function load(){try{const r=await fetch('/api/stats');raw=await r.json();upd(raw)}
-  catch(e){if(!built)$('root').innerHTML='<div class="empty"><h2>Connection Error</h2></div>'}}
+  catch(e){if(!built){retryCount=(retryCount||0)+1;$('root').innerHTML='<div class="empty"><h2>Connection Error</h2><p>Dashboard API not responding. Retrying in 5s… (attempt '+retryCount+')</p><p style="margin-top:8px;font-size:11px;color:var(--muted)">Make sure <code>better-ctx dashboard</code> is running.</p></div>';setTimeout(load,5000)}}}
+async function loadVer(){try{const r=await fetch('/api/version');const d=await r.json();if(d.current)$('ver').textContent='v'+d.current}catch(e){}}
 
 function df(){return{responsive:true,maintainAspectRatio:true,animation:{duration:500,easing:'easeOutQuart'},
   plugins:{legend:{display:false}},scales:{
-    x:{ticks:{color:'#6b6b88',font:{size:8,family:'Inter'}},grid:{color:'rgba(255,255,255,0.025)'},border:{display:false}},
-    y:{ticks:{color:'#6b6b88',font:{size:8,family:'Inter'},callback:v=>fmt(v)},grid:{color:'rgba(255,255,255,0.025)'},border:{display:false}}
+    x:{ticks:{color:'#6b6b88',font:{size:8}},grid:{color:'rgba(255,255,255,0.025)'},border:{display:false}},
+    y:{ticks:{color:'#6b6b88',font:{size:8},callback:v=>fmt(v)},grid:{color:'rgba(255,255,255,0.025)'},border:{display:false}}
   }}}
 
 function updCh(daily,cmds,sp){
@@ -369,7 +368,7 @@ function updCh(daily,cmds,sp){
     data:{labels:lb,datasets:[
       {label:'Saved',data:sv,backgroundColor:'rgba(52,211,153,.4)',borderRadius:3,borderSkipped:false},
       {label:'Sent',data:ot,backgroundColor:'rgba(129,140,248,.15)',borderRadius:3,borderSkipped:false}
-    ]},options:{...df(),plugins:{legend:{display:true,position:'bottom',labels:{color:'#6b6b88',font:{size:9,family:'Inter'},usePointStyle:true,pointStyle:'circle',padding:12}}},
+    ]},options:{...df(),plugins:{legend:{display:true,position:'bottom',labels:{color:'#6b6b88',font:{size:9},usePointStyle:true,pointStyle:'circle',padding:12}}},
       scales:{...df().scales,x:{...df().scales.x,stacked:true},y:{...df().scales.y,stacked:true}}}})}
 
   if(ch.rate){ch.rate.data.labels=lb;ch.rate.data.datasets[0].data=rt;ch.rate.update('none')}
@@ -385,7 +384,7 @@ function updCh(daily,cmds,sp){
   else{ch.pie=new Chart($('cPie'),{type:'doughnut',
     data:{labels:['MCP Tools','Shell Hook'],datasets:[{data:[sp.m.s,sp.h.s],backgroundColor:['#818cf8','#38bdf8'],borderWidth:0,hoverOffset:4,borderRadius:3}]},
     options:{responsive:true,maintainAspectRatio:true,cutout:'70%',
-      plugins:{legend:{position:'bottom',labels:{color:'#6b6b88',font:{size:9,family:'Inter'},padding:10,usePointStyle:true,pointStyle:'circle'}},
+      plugins:{legend:{position:'bottom',labels:{color:'#6b6b88',font:{size:9},padding:10,usePointStyle:true,pointStyle:'circle'}},
         tooltip:{callbacks:{label:c=>`${c.label}: ${fmt(c.parsed)} tokens`}}}}})}
 }
 
@@ -413,7 +412,7 @@ async function checkVersion(){
   if(v.update_available){$('ubCur').textContent='v'+v.current;$('ubNew').textContent='v'+v.latest;$('updateBanner').style.display='block'}}catch(e){}}
 
 async function loadAll(){await load();await checkVersion()}
-loadAll();startA();
+loadAll();startA();loadVer();
 </script>
 </body>
 </html>

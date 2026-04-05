@@ -90,17 +90,18 @@ pub fn handle(path: &str, crp_mode: CrpMode) -> String {
             ("aggressive + §MAP", tdd_agg_tokens),
             ("cache hit", cache_tokens),
         ];
-        let best = strategies.iter().min_by_key(|(_, t)| *t).unwrap();
-        let saved = raw_tokens.saturating_sub(best.1);
-        let pct = if raw_tokens > 0 {
-            (saved as f64 / raw_tokens as f64 * 100.0).round() as usize
-        } else {
-            0
-        };
-        rows.push(format!(
-            "Best: \"{}\" saves {} tokens ({}%)",
-            best.0, saved, pct
-        ));
+        if let Some(best) = strategies.iter().min_by_key(|(_, t)| *t) {
+            let saved = raw_tokens.saturating_sub(best.1);
+            let pct = if raw_tokens > 0 {
+                (saved as f64 / raw_tokens as f64 * 100.0).round() as usize
+            } else {
+                0
+            };
+            rows.push(format!(
+                "Best: \"{}\" saves {} tokens ({}%)",
+                best.0, saved, pct
+            ));
+        }
 
         let tdd_extra = sig_tokens.saturating_sub(sig_tdd_tokens);
         let tdd_pct = if sig_tokens > 0 {
@@ -131,17 +132,18 @@ pub fn handle(path: &str, crp_mode: CrpMode) -> String {
             ("entropy", entropy_tokens),
             ("cache hit", cache_tokens),
         ];
-        let best = strategies.iter().min_by_key(|(_, t)| *t).unwrap();
-        let saved = raw_tokens.saturating_sub(best.1);
-        let pct = if raw_tokens > 0 {
-            (saved as f64 / raw_tokens as f64 * 100.0).round() as usize
-        } else {
-            0
-        };
-        rows.push(format!(
-            "Best: \"{}\" saves {} tokens ({}%)",
-            best.0, saved, pct
-        ));
+        if let Some(best) = strategies.iter().min_by_key(|(_, t)| *t) {
+            let saved = raw_tokens.saturating_sub(best.1);
+            let pct = if raw_tokens > 0 {
+                (saved as f64 / raw_tokens as f64 * 100.0).round() as usize
+            } else {
+                0
+            };
+            rows.push(format!(
+                "Best: \"{}\" saves {} tokens ({}%)",
+                best.0, saved, pct
+            ));
+        }
     }
 
     rows.join("\n")

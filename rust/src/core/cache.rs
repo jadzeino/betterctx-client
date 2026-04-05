@@ -4,6 +4,10 @@ use std::time::Instant;
 
 use super::tokens::count_tokens;
 
+fn normalize_key(path: &str) -> String {
+    crate::hooks::normalize_tool_path(path)
+}
+
 fn max_cache_tokens() -> usize {
     std::env::var("BETTER_CTX_CACHE_MAX_TOKENS")
         .ok()
@@ -108,30 +112,32 @@ impl SessionCache {
     }
 
     pub fn get_file_ref(&mut self, path: &str) -> String {
-        if let Some(r) = self.file_refs.get(path) {
+        let key = normalize_key(path);
+        if let Some(r) = self.file_refs.get(&key) {
             return r.clone();
         }
         let r = format!("F{}", self.next_ref);
         self.next_ref += 1;
-        self.file_refs.insert(path.to_string(), r.clone());
+        self.file_refs.insert(key, r.clone());
         r
     }
 
     pub fn get_file_ref_readonly(&self, path: &str) -> Option<String> {
-        self.file_refs.get(path).cloned()
+        self.file_refs.get(&normalize_key(path)).cloned()
     }
 
     pub fn get(&self, path: &str) -> Option<&CacheEntry> {
-        self.entries.get(path)
+        self.entries.get(&normalize_key(path))
     }
 
     pub fn record_cache_hit(&mut self, path: &str) -> Option<&CacheEntry> {
+        let key = normalize_key(path);
         let ref_label = self
             .file_refs
-            .get(path)
+            .get(&key)
             .cloned()
             .unwrap_or_else(|| "F?".to_string());
-        if let Some(entry) = self.entries.get_mut(path) {
+        if let Some(entry) = self.entries.get_mut(&key) {
             entry.read_count += 1;
             entry.last_access = Instant::now();
             self.stats.total_reads += 1;
@@ -149,6 +155,7 @@ impl SessionCache {
     }
 
     pub fn store(&mut self, path: &str, content: String) -> (CacheEntry, bool) {
+        let key = normalize_key(path);
         let hash = compute_md5(&content);
         let line_count = content.lines().count();
         let original_tokens = count_tokens(&content);
@@ -157,14 +164,14 @@ impl SessionCache {
         self.stats.total_reads += 1;
         self.stats.total_original_tokens += original_tokens as u64;
 
-        if let Some(existing) = self.entries.get_mut(path) {
+        if let Some(existing) = self.entries.get_mut(&key) {
             existing.last_access = now;
             if existing.hash == hash {
                 existing.read_count += 1;
                 self.stats.cache_hits += 1;
                 let hit_msg = format!(
                     "{} cached {}t {}L",
-                    self.file_refs.get(path).unwrap_or(&"F?".to_string()),
+                    self.file_refs.get(&key).unwrap_or(&"F?".to_string()),
                     existing.read_count,
                     existing.line_count,
                 );
@@ -182,7 +189,7 @@ impl SessionCache {
         }
 
         self.evict_if_needed(original_tokens);
-        self.get_file_ref(path);
+        self.get_file_ref(&key);
 
         let entry = CacheEntry {
             content,
@@ -190,11 +197,11 @@ impl SessionCache {
             line_count,
             original_tokens,
             read_count: 1,
-            path: path.to_string(),
+            path: key.clone(),
             last_access: now,
         };
 
-        self.entries.insert(path.to_string(), entry.clone());
+        self.entries.insert(key, entry.clone());
         self.stats.files_tracked += 1;
         self.stats.total_sent_tokens += original_tokens as u64;
         (entry, false)
@@ -284,7 +291,7 @@ impl SessionCache {
     }
 
     pub fn invalidate(&mut self, path: &str) -> bool {
-        self.entries.remove(path).is_some()
+        self.entries.remove(&normalize_key(path)).is_some()
     }
 
     pub fn clear(&mut self) -> usize {

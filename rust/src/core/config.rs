@@ -206,13 +206,17 @@ impl Config {
         cfg
     }
 
-    pub fn save(&self) -> Result<(), String> {
-        let path = Self::path().ok_or("cannot determine home directory")?;
+    pub fn save(&self) -> std::result::Result<(), super::error::LeanCtxError> {
+        let path = Self::path().ok_or_else(|| {
+            super::error::LeanCtxError::Config("cannot determine home directory".into())
+        })?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&path, content).map_err(|e| e.to_string())
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| super::error::LeanCtxError::Config(e.to_string()))?;
+        std::fs::write(&path, content)?;
+        Ok(())
     }
 
     pub fn show(&self) -> String {

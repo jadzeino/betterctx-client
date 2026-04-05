@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 const STATS_FILE: &str = "mode_stats.json";
-const PREDICTOR_FLUSH_SECS: u64 = 60;
+const PREDICTOR_FLUSH_SECS: u64 = 10;
 
 static PREDICTOR_BUFFER: Mutex<Option<(ModePredictor, Instant)>> = Mutex::new(None);
 
@@ -222,15 +222,9 @@ impl ModePredictor {
             Some((_, ref last_flush)) => last_flush.elapsed().as_secs() >= PREDICTOR_FLUSH_SECS,
             None => true,
         };
-        *guard = Some((
-            self.clone(),
-            guard.as_ref().map_or_else(Instant::now, |(_, t)| *t),
-        ));
+        *guard = Some((self.clone(), Instant::now()));
         if should_flush {
             self.save_to_disk();
-            if let Some((_, ref mut t)) = *guard {
-                *t = Instant::now();
-            }
         }
     }
 
@@ -242,7 +236,10 @@ impl ModePredictor {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(STATS_FILE);
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(path, json);
+            let tmp = dir.join(".mode_stats.tmp");
+            if std::fs::write(&tmp, &json).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
         }
     }
 

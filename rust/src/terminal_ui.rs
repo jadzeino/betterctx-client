@@ -138,43 +138,46 @@ fn print_logo_plain() {
 }
 
 pub fn print_command_box() {
-    let dim = "\x1b[2m";
-    let rst = "\x1b[0m";
-    let bold = "\x1b[1m";
-    let cyan = "\x1b[36m";
-    let green = "\x1b[32m";
+    use crate::core::theme;
+    let cfg = crate::core::config::Config::load();
+    let t = theme::load_theme(&cfg.theme);
+    let d = theme::dim();
+    let b = theme::bold();
+    let r = theme::rst();
+    let cmd = t.accent.fg();
+    let ok = t.success.fg();
+    let m = t.muted.fg();
 
-    println!("  {dim}┌─────────────────────────────────────────────────────────┐{rst}");
+    println!("  {d}┌─────────────────────────────────────────────────────────┐{r}");
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx gain{rst}        {dim}Token savings dashboard{rst}         {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx gain{r}        {m}Token savings dashboard{r}         {d}│{r}"
     );
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx dashboard{rst}   {dim}Web analytics (browser){rst}        {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx dashboard{r}   {m}Web analytics (browser){r}        {d}│{r}"
     );
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx benchmark{rst}   {dim}Test compression quality{rst}        {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx benchmark{r}   {m}Test compression quality{r}        {d}│{r}"
     );
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx config{rst}      {dim}Edit settings{rst}                   {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx config{r}      {m}Edit settings{r}                   {d}│{r}"
     );
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx doctor{rst}      {dim}Verify installation{rst}             {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx doctor{r}      {m}Verify installation{r}             {d}│{r}"
     );
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx update{rst}      {dim}Self-update to latest{rst}           {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx update{r}      {m}Self-update to latest{r}           {d}│{r}"
     );
+    println!("  {d}│{r}  {cmd}{b}better-ctx off{r} / {cmd}{b}on{r}    {m}Toggle compression{r}              {d}│{r}");
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx off{rst} / {cyan}{bold}on{rst}    {dim}Toggle compression{rst}              {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx report-issue{r} {m}Report a bug (auto-diagnostics){r} {d}│{r}"
     );
+    println!("  {d}│{r}  {cmd}{b}better-ctx contribute{r}  {m}Share anonymized compression stats{r}{d}│{r}");
     println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx report-issue{rst} {dim}Report a bug (auto-diagnostics){rst} {dim}│{rst}"
+        "  {d}│{r}  {cmd}{b}better-ctx uninstall{r}   {m}Clean removal{r}                   {d}│{r}"
     );
-    println!(
-        "  {dim}│{rst}  {cyan}{bold}better-ctx uninstall{rst}   {dim}Clean removal{rst}                   {dim}│{rst}"
-    );
-    println!("  {dim}└─────────────────────────────────────────────────────────┘{rst}");
-    println!("  {green}Ready!{rst} Your next AI command will be automatically optimized.");
-    println!("  {dim}Docs: https://betterctx.com/docs{rst}");
+    println!("  {d}└─────────────────────────────────────────────────────────┘{r}");
+    println!("  {ok}Ready!{r} Your next AI command will be automatically optimized.");
+    println!("  {d}Docs: https://betterctx.com/docs{r}");
     println!();
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "better-ctx"
-version = "2.16.2"
+version = "2.17.0"
 edition = "2021"
 description = "Context Intelligence Engine with CCP. 25 MCP tools, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge, multi-agent sharing, LITM-aware positioning. Supports 23 AI tools. Reduces LLM token consumption by up to 99%."
 license = "MIT"
@@ -97,3 +97,6 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[dev-dependencies]
+tempfile = "3.27.0"

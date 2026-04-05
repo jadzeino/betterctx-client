@@ -115,11 +115,12 @@ pub fn handle(path: &str, crp_mode: CrpMode) -> String {
     if crp_mode.is_tdd() {
         strategies.push(("signatures (tdd)", sig_tokens));
     }
-    let best = strategies.iter().min_by_key(|(_, t)| *t).unwrap();
-    sections.push(format!(
-        "Recommendation: {} (best first-read savings)",
-        best.0
-    ));
+    if let Some(best) = strategies.iter().min_by_key(|(_, t)| *t) {
+        sections.push(format!(
+            "Recommendation: {} (best first-read savings)",
+            best.0
+        ));
+    }
 
     let k = entropy::kolmogorov_proxy(&content);
     let k_class = entropy::compressibility_class(&content);

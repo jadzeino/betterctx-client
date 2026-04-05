@@ -1,13 +1,13 @@
 # better-ctx — Context Engineering Layer
 
-MANDATORY: Use better-ctx MCP tools for ALL reads, searches, and shell commands.
+PREFER better-ctx MCP tools over native equivalents for token savings:
 
-| FORBIDDEN | USE INSTEAD | Why |
-|-----------|-------------|-----|
-| Read / cat / head / tail | `ctx_read(path)` | Session caching, 8 compression modes, re-reads cost ~13 tokens |
-| Bash (shell commands) | `ctx_shell(command)` | Pattern-based compression for git, npm, cargo, docker, tsc |
-| Grep / rg | `ctx_search(pattern, path)` | Compact context, token-efficient results |
-| ls / find | `ctx_tree(path, depth)` | Compact directory maps with file counts |
+| PREFER | OVER | Why |
+|--------|------|-----|
+| `ctx_read(path)` | Read / cat / head / tail | Session caching, 8 compression modes, re-reads cost ~13 tokens |
+| `ctx_shell(command)` | Bash (shell commands) | Pattern-based compression for git, npm, cargo, docker, tsc |
+| `ctx_search(pattern, path)` | Grep / rg | Compact context, token-efficient results |
+| `ctx_tree(path, depth)` | ls / find | Compact directory maps with file counts |
 
 ## ctx_read Modes
 
@@ -19,6 +19,9 @@ MANDATORY: Use better-ctx MCP tools for ALL reads, searches, and shell commands.
 - `entropy` — Shannon + Jaccard filtering
 - `lines:N-M` — specific range
 
-Write, StrReplace, Delete have no better-ctx equivalent — use them normally.
+## File Editing
 
-REMINDER: NEVER use native Read, Bash, Grep, or ls. ALWAYS use ctx_read, ctx_shell, ctx_search, ctx_tree.
+Use native Edit/StrReplace when available. If Edit requires Read and Read is unavailable,
+use `ctx_edit(path, old_string, new_string)` — it reads, replaces, and writes in one MCP call.
+NEVER loop trying to make Edit work. If it fails, switch to ctx_edit immediately.
+Write, Delete have no better-ctx equivalent — use them normally.

@@ -7,7 +7,7 @@ pub fn select_mode(cache: &SessionCache, path: &str) -> String {
     select_mode_with_task(cache, path, None)
 }
 
-pub fn select_mode_with_task(cache: &SessionCache, path: &str, task: Option<&str>) -> String {
+pub fn select_mode_with_task(cache: &SessionCache, path: &str, _task: Option<&str>) -> String {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return "full".to_string(),
@@ -35,11 +35,8 @@ pub fn select_mode_with_task(cache: &SessionCache, path: &str, task: Option<&str
         return "full".to_string();
     }
 
-    if let Some(t) = task {
-        if !t.is_empty() && token_count > 1000 && is_code(ext) {
-            return "task".to_string();
-        }
-    }
+    // task mode (IB-filter) is never auto-selected — it reorders lines and breaks edits.
+    // Users can still explicitly request mode: "task".
 
     let sig = FileSignature::from_path(path, token_count);
     let predictor = ModePredictor::new();
@@ -51,13 +48,13 @@ pub fn select_mode_with_task(cache: &SessionCache, path: &str, task: Option<&str
 }
 
 fn heuristic_mode(ext: &str, token_count: usize) -> String {
-    if token_count > 5000 {
+    if token_count > 8000 {
         if is_code(ext) {
-            return "signatures".to_string();
+            return "map".to_string();
         }
         return "aggressive".to_string();
     }
-    if token_count > 2000 && is_code(ext) {
+    if token_count > 3000 && is_code(ext) {
         return "map".to_string();
     }
     "full".to_string()

@@ -21,7 +21,7 @@ pub fn run(args: &[String]) {
     let title = title.unwrap_or_else(|| prompt_input("Issue title"));
     if title.trim().is_empty() {
         eprintln!("Title is required. Aborting.");
-        return;
+        std::process::exit(1);
     }
     let description = description.unwrap_or_else(|| prompt_input("Describe the problem"));
 

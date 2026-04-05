@@ -661,3 +661,39 @@ pub fn run() {
     println!("  {BOLD}{WHITE}Summary:{RST}  {GREEN}{passed}{RST}{DIM}/{effective_total}{RST} checks passed");
     println!("  {DIM}This binary: better-ctx {VERSION} (Cargo package version){RST}");
 }
+
+pub fn run_compact() {
+    let mut passed = 0u32;
+    let total = 5u32;
+
+    if resolve_better_ctx_binary().is_some() || path_in_path_env() {
+        passed += 1;
+    }
+    let lean_dir = dirs::home_dir().map(|h| h.join(".better-ctx"));
+    if lean_dir.as_ref().is_some_and(|p| p.is_dir()) {
+        passed += 1;
+    }
+    if lean_dir
+        .as_ref()
+        .map(|d| d.join("stats.json"))
+        .and_then(|p| std::fs::metadata(p).ok())
+        .is_some_and(|m| m.is_file())
+    {
+        passed += 1;
+    }
+    if shell_aliases_outcome().ok {
+        passed += 1;
+    }
+    if mcp_config_outcome().ok {
+        passed += 1;
+    }
+
+    let status = if passed == total {
+        format!("{GREEN}✓ All {total} checks passed{RST}")
+    } else {
+        format!(
+            "{YELLOW}{passed}/{total} passed{RST} — run {BOLD}better-ctx doctor{RST} for details"
+        )
+    };
+    println!("  {status}");
+}
