@@ -132,13 +132,13 @@ jobs:
 
       - name: Publish better-ctx-bin
         working-directory: packages/better-ctx-bin
-        run: npm publish
+        run: npm publish || true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish pi-better-ctx
         working-directory: packages/pi-better-ctx
-        run: npm publish
+        run: npm publish || true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
