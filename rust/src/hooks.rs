@@ -12,18 +12,33 @@ pub fn refresh_installed_hooks() {
         None => return,
     };
 
-    if home.join(".claude/hooks/better-ctx-rewrite.sh").exists() {
+    let claude_hooks = home.join(".claude/hooks/better-ctx-rewrite.sh").exists()
+        || home.join(".claude/settings.json").exists()
+            && std::fs::read_to_string(home.join(".claude/settings.json"))
+                .unwrap_or_default()
+                .contains("better-ctx");
+
+    if claude_hooks {
         install_claude_hook_scripts(&home);
+        install_claude_hook_config(&home);
     }
 
-    if home.join(".cursor/hooks/better-ctx-rewrite.sh").exists() {
+    let cursor_hooks = home.join(".cursor/hooks/better-ctx-rewrite.sh").exists()
+        || home.join(".cursor/hooks.json").exists()
+            && std::fs::read_to_string(home.join(".cursor/hooks.json"))
+                .unwrap_or_default()
+                .contains("better-ctx");
+
+    if cursor_hooks {
         install_cursor_hook_scripts(&home);
+        install_cursor_hook_config(&home);
     }
 
     let gemini_rewrite = home.join(".gemini/hooks/better-ctx-rewrite-gemini.sh");
     let gemini_legacy = home.join(".gemini/hooks/better-ctx-hook-gemini.sh");
     if gemini_rewrite.exists() || gemini_legacy.exists() {
         install_gemini_hook_scripts(&home);
+        install_gemini_hook_config(&home);
     }
 
     if home
@@ -100,7 +115,7 @@ pub fn normalize_tool_path(path: &str) -> String {
     p
 }
 
-fn generate_rewrite_script(binary: &str) -> String {
+pub fn generate_rewrite_script(binary: &str) -> String {
     format!(
         r#"#!/usr/bin/env bash
 # better-ctx PreToolUse hook — rewrites bash commands to better-ctx equivalents
@@ -109,62 +124,47 @@ set -euo pipefail
 BETTER_CTX_BIN="{binary}"
 
 INPUT=$(cat)
-TOOL=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4)
+TOOL=$(echo "$INPUT" | grep -oE '"tool_name":"([^"\\]|\\.)*"' | head -1 | sed 's/^"tool_name":"//;s/"$//' | sed 's/\\"/"/g;s/\\\\/\\/g')
 
 if [ "$TOOL" != "Bash" ] && [ "$TOOL" != "bash" ]; then
   exit 0
 fi
 
-CMD=$(echo "$INPUT" | grep -o '"command":"[^"]*"' | head -1 | cut -d'"' -f4)
+CMD=$(echo "$INPUT" | grep -oE '"command":"([^"\\]|\\.)*"' | head -1 | sed 's/^"command":"//;s/"$//' | sed 's/\\"/"/g;s/\\\\/\\/g')
 
-if echo "$CMD" | grep -qE "^(better-ctx |$BETTER_CTX_BIN )"; then
+if [ -z "$CMD" ] || echo "$CMD" | grep -qE "^(better-ctx |$BETTER_CTX_BIN )"; then
   exit 0
 fi
 
-REWRITE=""
 case "$CMD" in
-  git\ *)       REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  gh\ *)        REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  cargo\ *)     REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  npm\ *)       REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  pnpm\ *)      REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  yarn\ *)      REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  docker\ *)    REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  kubectl\ *)   REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  pip\ *|pip3\ *)  REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  ruff\ *)      REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  go\ *)        REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  curl\ *)      REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  grep\ *|rg\ *)  REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  find\ *)      REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  cat\ *|head\ *|tail\ *)  REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  ls\ *|ls)     REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  eslint*|prettier*|tsc*)  REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  pytest*|ruff\ *|mypy*)   REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  aws\ *)       REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  helm\ *)      REWRITE="$BETTER_CTX_BIN -c $CMD" ;;
-  *)            exit 0 ;;
+  git\ *|gh\ *|cargo\ *|npm\ *|pnpm\ *|yarn\ *|docker\ *|kubectl\ *|pip\ *|pip3\ *|ruff\ *|go\ *|curl\ *|grep\ *|rg\ *|find\ *|cat\ *|head\ *|tail\ *|ls\ *|ls|eslint*|prettier*|tsc*|pytest*|mypy*|aws\ *|helm\ *)
+    # Shell-escape then JSON-escape (two passes)
+    SHELL_ESC=$(printf '%s' "$CMD" | sed 's/\\/\\\\/g;s/"/\\"/g')
+    REWRITE="$BETTER_CTX_BIN -c \"$SHELL_ESC\""
+    JSON_CMD=$(printf '%s' "$REWRITE" | sed 's/\\/\\\\/g;s/"/\\"/g')
+    printf '{{"hookSpecificOutput":{{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{{"command":"%s"}}}}}}' "$JSON_CMD"
+    ;;
+  *) exit 0 ;;
 esac
-
-if [ -n "$REWRITE" ]; then
-  echo "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{{\"command\":\"$REWRITE\"}}}}}}"
-fi
 "#
     )
 }
 
-fn generate_compact_rewrite_script(binary: &str) -> String {
+pub fn generate_compact_rewrite_script(binary: &str) -> String {
     format!(
         r#"#!/usr/bin/env bash
 # better-ctx hook — rewrites shell commands
 set -euo pipefail
 BETTER_CTX_BIN="{binary}"
 INPUT=$(cat)
-CMD=$(echo "$INPUT" | grep -o '"command":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
+CMD=$(echo "$INPUT" | grep -oE '"command":"([^"\\]|\\.)*"' | head -1 | sed 's/^"command":"//;s/"$//' | sed 's/\\"/"/g;s/\\\\/\\/g' 2>/dev/null || echo "")
 if [ -z "$CMD" ] || echo "$CMD" | grep -qE "^(better-ctx |$BETTER_CTX_BIN )"; then exit 0; fi
 case "$CMD" in
   git\ *|gh\ *|cargo\ *|npm\ *|pnpm\ *|docker\ *|kubectl\ *|pip\ *|ruff\ *|go\ *|curl\ *|grep\ *|rg\ *|find\ *|ls\ *|ls|cat\ *|aws\ *|helm\ *)
-    echo "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"updatedInput\":{{\"command\":\"$BETTER_CTX_BIN -c $CMD\"}}}}}}" ;;
+    SHELL_ESC=$(printf '%s' "$CMD" | sed 's/\\/\\\\/g;s/"/\\"/g')
+    REWRITE="$BETTER_CTX_BIN -c \"$SHELL_ESC\""
+    JSON_CMD=$(printf '%s' "$REWRITE" | sed 's/\\/\\\\/g;s/"/\\"/g')
+    printf '{{"hookSpecificOutput":{{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{{"command":"%s"}}}}}}' "$JSON_CMD" ;;
   *) exit 0 ;;
 esac
 "#
@@ -172,55 +172,15 @@ esac
 }
 
 const REDIRECT_SCRIPT_CLAUDE: &str = r#"#!/usr/bin/env bash
-# better-ctx PreToolUse hook — redirects Read/Grep/List to MCP equivalents
-set -euo pipefail
-
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
-
-case "$TOOL" in
-  Read|read|ReadFile|read_file|View|view)
-    if pgrep -f "better-ctx" >/dev/null 2>&1; then
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"STOP. Use ctx_read(path) from the better-ctx MCP server instead. It saves 60-80% input tokens via caching and compression. Available modes: full, map, signatures, diff, lines:N-M. Never use native Read — always use ctx_read."}}'
-    fi
-    ;;
-  Grep|grep|Search|search|RipGrep|ripgrep)
-    if pgrep -f "better-ctx" >/dev/null 2>&1; then
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"STOP. Use ctx_search(pattern, path) from the better-ctx MCP server instead. It provides compact, token-efficient results with .gitignore awareness. Never use native Grep — always use ctx_search."}}'
-    fi
-    ;;
-  ListFiles|list_files|ListDirectory|list_directory)
-    if pgrep -f "better-ctx" >/dev/null 2>&1; then
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"STOP. Use ctx_tree(path, depth) from the better-ctx MCP server instead. It provides compact directory maps with file counts. Never use native ListFiles — always use ctx_tree."}}'
-    fi
-    ;;
-esac
+# better-ctx PreToolUse hook — all native tools pass through
+# Read/Grep/ListFiles are allowed so Edit (which requires native Read) works.
+# The MCP instructions guide the AI to prefer ctx_read/ctx_search/ctx_tree.
+exit 0
 "#;
 
 const REDIRECT_SCRIPT_GENERIC: &str = r#"#!/usr/bin/env bash
-# better-ctx hook — redirects Read/Grep to MCP equivalents
-set -euo pipefail
-
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
-
-case "$TOOL" in
-  Read|read|ReadFile|read_file)
-    if pgrep -f "better-ctx" >/dev/null 2>&1; then
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"STOP. Use ctx_read(path) from better-ctx MCP instead. Saves 60-80% tokens."}}'
-    fi
-    ;;
-  Grep|grep|Search|search)
-    if pgrep -f "better-ctx" >/dev/null 2>&1; then
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"STOP. Use ctx_search(pattern, path) from better-ctx MCP instead."}}'
-    fi
-    ;;
-  ListFiles|list_files|ListDirectory|list_directory)
-    if pgrep -f "better-ctx" >/dev/null 2>&1; then
-      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"STOP. Use ctx_tree(path, depth) from better-ctx MCP instead."}}'
-    fi
-    ;;
-esac
+# better-ctx hook — all native tools pass through
+exit 0
 "#;
 
 pub fn install_project_rules() {
@@ -297,7 +257,7 @@ pub fn install_agent_hook(agent: &str, global: bool) {
     match agent {
         "claude" | "claude-code" => install_claude_hook(global),
         "cursor" => install_cursor_hook(global),
-        "gemini" => install_gemini_hook(),
+        "gemini" | "antigravity" => install_gemini_hook(),
         "codex" => install_codex_hook(),
         "windsurf" => install_windsurf_rules(global),
         "cline" | "roo" => install_cline_rules(global),
@@ -356,9 +316,10 @@ pub fn install_agent_hook(agent: &str, global: bool) {
             "~/.amp/mcp.json",
             &dirs::home_dir().unwrap_or_default().join(".amp/mcp.json"),
         ),
+        "crush" => install_crush_hook(),
         _ => {
             eprintln!("Unknown agent: {agent}");
-            eprintln!("  Supported: claude, cursor, gemini, codex, windsurf, cline, roo, copilot, pi, qwen, trae, amazonq, jetbrains, kiro, verdent, opencode, aider, amp");
+            eprintln!("  Supported: claude, cursor, gemini, antigravity, codex, windsurf, cline, roo, copilot, pi, qwen, trae, amazonq, jetbrains, kiro, verdent, opencode, aider, amp, crush");
             std::process::exit(1);
         }
     }
@@ -425,22 +386,54 @@ fn install_claude_hook_scripts(home: &std::path::Path) {
     let hooks_dir = home.join(".claude").join("hooks");
     let _ = std::fs::create_dir_all(&hooks_dir);
 
-    let binary = resolve_binary_path_for_bash();
+    let binary = resolve_binary_path();
 
     let rewrite_path = hooks_dir.join("better-ctx-rewrite.sh");
-    let rewrite_script = generate_rewrite_script(&binary);
+    let rewrite_script = generate_rewrite_script(&resolve_binary_path_for_bash());
     write_file(&rewrite_path, &rewrite_script);
     make_executable(&rewrite_path);
 
     let redirect_path = hooks_dir.join("better-ctx-redirect.sh");
     write_file(&redirect_path, REDIRECT_SCRIPT_CLAUDE);
     make_executable(&redirect_path);
+
+    let wrapper = |subcommand: &str| -> String {
+        if cfg!(windows) {
+            format!("{binary} hook {subcommand}")
+        } else {
+            format!("{} hook {subcommand}", resolve_binary_path_for_bash())
+        }
+    };
+
+    let rewrite_native = hooks_dir.join("better-ctx-rewrite-native");
+    write_file(
+        &rewrite_native,
+        &format!(
+            "#!/bin/sh\nexec {} hook rewrite\n",
+            resolve_binary_path_for_bash()
+        ),
+    );
+    make_executable(&rewrite_native);
+
+    let redirect_native = hooks_dir.join("better-ctx-redirect-native");
+    write_file(
+        &redirect_native,
+        &format!(
+            "#!/bin/sh\nexec {} hook redirect\n",
+            resolve_binary_path_for_bash()
+        ),
+    );
+    make_executable(&redirect_native);
+
+    let _ = wrapper; // suppress unused warning on unix
 }
 
 fn install_claude_hook_config(home: &std::path::Path) {
     let hooks_dir = home.join(".claude").join("hooks");
-    let rewrite_path = hooks_dir.join("better-ctx-rewrite.sh");
-    let redirect_path = hooks_dir.join("better-ctx-redirect.sh");
+    let binary = resolve_binary_path();
+
+    let rewrite_cmd = format!("{binary} hook rewrite");
+    let redirect_cmd = format!("{binary} hook redirect");
 
     let settings_path = home.join(".claude").join("settings.json");
     let settings_content = if settings_path.exists() {
@@ -449,9 +442,12 @@ fn install_claude_hook_config(home: &std::path::Path) {
         String::new()
     };
 
-    if settings_content.contains("better-ctx-rewrite")
-        && settings_content.contains("better-ctx-redirect")
-    {
+    let needs_update =
+        !settings_content.contains("hook rewrite") || !settings_content.contains("hook redirect");
+    let has_old_hooks = settings_content.contains("better-ctx-rewrite.sh")
+        || settings_content.contains("better-ctx-redirect.sh");
+
+    if !needs_update && !has_old_hooks {
         return;
     }
 
@@ -462,14 +458,14 @@ fn install_claude_hook_config(home: &std::path::Path) {
                     "matcher": "Bash|bash",
                     "hooks": [{
                         "type": "command",
-                        "command": rewrite_path.to_string_lossy()
+                        "command": rewrite_cmd
                     }]
                 },
                 {
                     "matcher": "Read|read|ReadFile|read_file|View|view|Grep|grep|Search|search|ListFiles|list_files|ListDirectory|list_directory",
                     "hooks": [{
                         "type": "command",
-                        "command": redirect_path.to_string_lossy()
+                        "command": redirect_cmd
                     }]
                 }
             ]
@@ -490,7 +486,9 @@ fn install_claude_hook_config(home: &std::path::Path) {
             );
         }
     }
-    println!("Installed Claude Code hooks at {}", hooks_dir.display());
+    if !mcp_server_quiet_mode() {
+        println!("Installed Claude Code hooks at {}", hooks_dir.display());
+    }
 }
 
 fn install_cursor_hook(global: bool) {
@@ -537,31 +535,44 @@ fn install_cursor_hook_scripts(home: &std::path::Path) {
     let redirect_path = hooks_dir.join("better-ctx-redirect.sh");
     write_file(&redirect_path, REDIRECT_SCRIPT_GENERIC);
     make_executable(&redirect_path);
+
+    let native_binary = resolve_binary_path();
+    let rewrite_native = hooks_dir.join("better-ctx-rewrite-native");
+    write_file(
+        &rewrite_native,
+        &format!("#!/bin/sh\nexec {} hook rewrite\n", native_binary),
+    );
+    make_executable(&rewrite_native);
+
+    let redirect_native = hooks_dir.join("better-ctx-redirect-native");
+    write_file(
+        &redirect_native,
+        &format!("#!/bin/sh\nexec {} hook redirect\n", native_binary),
+    );
+    make_executable(&redirect_native);
 }
 
 fn install_cursor_hook_config(home: &std::path::Path) {
-    let hooks_dir = home.join(".cursor").join("hooks");
-    let rewrite_path = hooks_dir.join("better-ctx-rewrite.sh");
-    let redirect_path = hooks_dir.join("better-ctx-redirect.sh");
+    let binary = resolve_binary_path();
+    let rewrite_cmd = format!("{binary} hook rewrite");
+    let redirect_cmd = format!("{binary} hook redirect");
 
     let hooks_json = home.join(".cursor").join("hooks.json");
+
     let hook_config = serde_json::json!({
-        "hooks": [
-            {
-                "event": "preToolUse",
-                "matcher": {
-                    "tool": "terminal_command"
+        "version": 1,
+        "hooks": {
+            "preToolUse": [
+                {
+                    "matcher": "terminal_command",
+                    "command": rewrite_cmd
                 },
-                "command": rewrite_path.to_string_lossy()
-            },
-            {
-                "event": "preToolUse",
-                "matcher": {
-                    "tool": "read_file|grep|search|list_files|list_directory"
-                },
-                "command": redirect_path.to_string_lossy()
-            }
-        ]
+                {
+                    "matcher": "read_file|grep|search|list_files|list_directory",
+                    "command": redirect_cmd
+                }
+            ]
+        }
     });
 
     let content = if hooks_json.exists() {
@@ -570,15 +581,35 @@ fn install_cursor_hook_config(home: &std::path::Path) {
         String::new()
     };
 
-    if content.contains("better-ctx-rewrite") && content.contains("better-ctx-redirect") {
+    let has_correct_format = content.contains("\"version\"") && content.contains("\"preToolUse\"");
+    if has_correct_format && content.contains("hook rewrite") && content.contains("hook redirect") {
         return;
     }
 
-    write_file(
-        &hooks_json,
-        &serde_json::to_string_pretty(&hook_config).unwrap(),
-    );
-    println!("Installed Cursor hooks at {}", hooks_json.display());
+    if content.is_empty() || !content.contains("\"version\"") {
+        write_file(
+            &hooks_json,
+            &serde_json::to_string_pretty(&hook_config).unwrap(),
+        );
+    } else if let Ok(mut existing) = serde_json::from_str::<serde_json::Value>(&content) {
+        if let Some(obj) = existing.as_object_mut() {
+            obj.insert("version".to_string(), serde_json::json!(1));
+            obj.insert("hooks".to_string(), hook_config["hooks"].clone());
+            write_file(
+                &hooks_json,
+                &serde_json::to_string_pretty(&existing).unwrap(),
+            );
+        }
+    } else {
+        write_file(
+            &hooks_json,
+            &serde_json::to_string_pretty(&hook_config).unwrap(),
+        );
+    }
+
+    if !mcp_server_quiet_mode() {
+        println!("Installed Cursor hooks at {}", hooks_json.display());
+    }
 }
 
 fn install_gemini_hook() {
@@ -611,9 +642,9 @@ fn install_gemini_hook_scripts(home: &std::path::Path) {
 }
 
 fn install_gemini_hook_config(home: &std::path::Path) {
-    let hooks_dir = home.join(".gemini").join("hooks");
-    let rewrite_path = hooks_dir.join("better-ctx-rewrite-gemini.sh");
-    let redirect_path = hooks_dir.join("better-ctx-redirect-gemini.sh");
+    let binary = resolve_binary_path();
+    let rewrite_cmd = format!("{binary} hook rewrite");
+    let redirect_cmd = format!("{binary} hook redirect");
 
     let settings_path = home.join(".gemini").join("settings.json");
     let settings_content = if settings_path.exists() {
@@ -622,9 +653,14 @@ fn install_gemini_hook_config(home: &std::path::Path) {
         String::new()
     };
 
-    if settings_content.contains("better-ctx-rewrite")
-        && settings_content.contains("better-ctx-redirect")
-    {
+    let has_new_format = settings_content.contains("hook rewrite")
+        && settings_content.contains("hook redirect")
+        && settings_content.contains("\"type\"");
+    let has_old_hooks = settings_content.contains("better-ctx-rewrite")
+        || settings_content.contains("better-ctx-redirect")
+        || (settings_content.contains("hook rewrite") && !settings_content.contains("\"type\""));
+
+    if has_new_format && !has_old_hooks {
         return;
     }
 
@@ -632,10 +668,16 @@ fn install_gemini_hook_config(home: &std::path::Path) {
         "hooks": {
             "BeforeTool": [
                 {
-                    "command": rewrite_path.to_string_lossy()
+                    "hooks": [{
+                        "type": "command",
+                        "command": rewrite_cmd
+                    }]
                 },
                 {
-                    "command": redirect_path.to_string_lossy()
+                    "hooks": [{
+                        "type": "command",
+                        "command": redirect_cmd
+                    }]
                 }
             ]
         }
@@ -655,7 +697,12 @@ fn install_gemini_hook_config(home: &std::path::Path) {
             );
         }
     }
-    println!("Installed Gemini CLI hooks at {}", hooks_dir.display());
+    if !mcp_server_quiet_mode() {
+        println!(
+            "Installed Gemini CLI hooks at {}",
+            settings_path.parent().unwrap_or(&settings_path).display()
+        );
+    }
 }
 
 fn install_codex_hook() {
@@ -808,6 +855,8 @@ fn install_pi_hook(global: bool) {
         }
     }
 
+    write_pi_mcp_config();
+
     if !global {
         let agents_md = PathBuf::from("AGENTS.md");
         if !agents_md.exists()
@@ -828,10 +877,71 @@ fn install_pi_hook(global: bool) {
     }
 
     println!();
-    println!(
-        "Setup complete. All Pi tools (bash, read, grep, find, ls) now route through better-ctx."
-    );
-    println!("Use /better-ctx in Pi to verify the binary path.");
+    println!("Setup complete. All Pi tools (bash, read, grep, find, ls) route through better-ctx.");
+    println!("MCP tools (ctx_session, ctx_knowledge, ctx_semantic_search, ...) also available.");
+    println!("Use /better-ctx in Pi to verify the binary path and MCP status.");
+}
+
+fn write_pi_mcp_config() {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+
+    let mcp_config_path = home.join(".pi/agent/mcp.json");
+
+    if !home.join(".pi/agent").exists() {
+        println!("  \x1b[2m○ ~/.pi/agent/ not found — skipping MCP config\x1b[0m");
+        return;
+    }
+
+    if mcp_config_path.exists() {
+        let content = match std::fs::read_to_string(&mcp_config_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if content.contains("better-ctx") {
+            println!("  \x1b[32m✓\x1b[0m Pi MCP config already contains better-ctx");
+            return;
+        }
+
+        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(obj) = json.as_object_mut() {
+                let servers = obj
+                    .entry("mcpServers")
+                    .or_insert_with(|| serde_json::json!({}));
+                if let Some(servers_obj) = servers.as_object_mut() {
+                    servers_obj.insert("better-ctx".to_string(), pi_mcp_server_entry());
+                }
+                if let Ok(formatted) = serde_json::to_string_pretty(&json) {
+                    let _ = std::fs::write(&mcp_config_path, formatted);
+                    println!(
+                        "  \x1b[32m✓\x1b[0m Added better-ctx to Pi MCP config (~/.pi/agent/mcp.json)"
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    let content = serde_json::json!({
+        "mcpServers": {
+            "better-ctx": pi_mcp_server_entry()
+        }
+    });
+    if let Ok(formatted) = serde_json::to_string_pretty(&content) {
+        let _ = std::fs::write(&mcp_config_path, formatted);
+        println!("  \x1b[32m✓\x1b[0m Created Pi MCP config (~/.pi/agent/mcp.json)");
+    }
+}
+
+fn pi_mcp_server_entry() -> serde_json::Value {
+    let binary = resolve_binary_path();
+    serde_json::json!({
+        "command": binary,
+        "lifecycle": "lazy",
+        "directTools": true
+    })
 }
 
 fn install_copilot_hook(global: bool) {
@@ -938,6 +1048,58 @@ fn make_executable(path: &PathBuf) {
 
 #[cfg(not(unix))]
 fn make_executable(_path: &PathBuf) {}
+
+fn install_crush_hook() {
+    let binary = resolve_binary_path();
+    let home = dirs::home_dir().unwrap_or_default();
+    let config_path = home.join(".config/crush/crush.json");
+    let display_path = "~/.config/crush/crush.json";
+
+    if let Some(parent) = config_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        if content.contains("better-ctx") {
+            println!("Crush MCP already configured at {display_path}");
+            return;
+        }
+
+        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(obj) = json.as_object_mut() {
+                let servers = obj.entry("mcp").or_insert_with(|| serde_json::json!({}));
+                if let Some(servers_obj) = servers.as_object_mut() {
+                    servers_obj.insert(
+                        "better-ctx".to_string(),
+                        serde_json::json!({ "type": "stdio", "command": binary }),
+                    );
+                }
+                if let Ok(formatted) = serde_json::to_string_pretty(&json) {
+                    let _ = std::fs::write(&config_path, formatted);
+                    println!("  \x1b[32m✓\x1b[0m Crush MCP configured at {display_path}");
+                    return;
+                }
+            }
+        }
+    }
+
+    let content = serde_json::to_string_pretty(&serde_json::json!({
+        "mcp": {
+            "better-ctx": {
+                "type": "stdio",
+                "command": binary
+            }
+        }
+    }));
+
+    if let Ok(json_str) = content {
+        let _ = std::fs::write(&config_path, json_str);
+        println!("  \x1b[32m✓\x1b[0m Crush MCP configured at {display_path}");
+    } else {
+        eprintln!("  \x1b[31m✗\x1b[0m Failed to configure Crush");
+    }
+}
 
 fn install_mcp_json_agent(name: &str, display_path: &str, config_path: &std::path::Path) {
     let binary = resolve_binary_path();
@@ -1120,5 +1282,95 @@ mod tests {
             normalize_tool_path("//server/share/file"),
             "//server/share/file"
         );
+    }
+
+    #[test]
+    fn cursor_hook_config_has_version_and_object_hooks() {
+        let config = serde_json::json!({
+            "version": 1,
+            "hooks": {
+                "preToolUse": [
+                    {
+                        "matcher": "terminal_command",
+                        "command": "better-ctx hook rewrite"
+                    },
+                    {
+                        "matcher": "read_file|grep|search|list_files|list_directory",
+                        "command": "better-ctx hook redirect"
+                    }
+                ]
+            }
+        });
+
+        let json_str = serde_json::to_string_pretty(&config).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed["version"], 1);
+        assert!(parsed["hooks"].is_object());
+        assert!(parsed["hooks"]["preToolUse"].is_array());
+        assert_eq!(parsed["hooks"]["preToolUse"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            parsed["hooks"]["preToolUse"][0]["matcher"],
+            "terminal_command"
+        );
+    }
+
+    #[test]
+    fn cursor_hook_detects_old_format_needs_migration() {
+        let old_format =
+            r#"{"hooks":[{"event":"preToolUse","command":"better-ctx hook rewrite"}]}"#;
+        let has_correct =
+            old_format.contains("\"version\"") && old_format.contains("\"preToolUse\"");
+        assert!(
+            !has_correct,
+            "Old format should be detected as needing migration"
+        );
+    }
+
+    #[test]
+    fn gemini_hook_config_has_type_command() {
+        let binary = "better-ctx";
+        let rewrite_cmd = format!("{binary} hook rewrite");
+        let redirect_cmd = format!("{binary} hook redirect");
+
+        let hook_config = serde_json::json!({
+            "hooks": {
+                "BeforeTool": [
+                    {
+                        "hooks": [{
+                            "type": "command",
+                            "command": rewrite_cmd
+                        }]
+                    },
+                    {
+                        "hooks": [{
+                            "type": "command",
+                            "command": redirect_cmd
+                        }]
+                    }
+                ]
+            }
+        });
+
+        let parsed = hook_config;
+        let before_tool = parsed["hooks"]["BeforeTool"].as_array().unwrap();
+        assert_eq!(before_tool.len(), 2);
+
+        let first_hook = &before_tool[0]["hooks"][0];
+        assert_eq!(first_hook["type"], "command");
+        assert_eq!(first_hook["command"], "better-ctx hook rewrite");
+
+        let second_hook = &before_tool[1]["hooks"][0];
+        assert_eq!(second_hook["type"], "command");
+        assert_eq!(second_hook["command"], "better-ctx hook redirect");
+    }
+
+    #[test]
+    fn gemini_hook_old_format_detected() {
+        let old_format = r#"{"hooks":{"BeforeTool":[{"command":"better-ctx hook rewrite"}]}}"#;
+        let has_new = old_format.contains("hook rewrite")
+            && old_format.contains("hook redirect")
+            && old_format.contains("\"type\"");
+        assert!(!has_new, "Missing 'type' field should trigger migration");
     }
 }

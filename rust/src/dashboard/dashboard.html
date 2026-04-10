@@ -138,6 +138,82 @@ tr:hover td{background:var(--surface-2)}
 .empty code{background:var(--surface-3);border:1px solid var(--border);border-radius:5px;padding:.15em .4em;font-family:var(--mono);font-size:.85em}
 .loading{text-align:center;padding:120px 20px;color:var(--muted);font-size:13px}
 [data-live]{transition:opacity .15s}[data-live].flash{opacity:.6}
+
+/* Buddy Card */
+.buddy-card{position:relative;background:rgba(10,10,18,0.6);backdrop-filter:blur(24px);
+  border:1px solid var(--border-light);border-radius:var(--r);padding:28px;overflow:hidden;
+  display:flex;gap:28px;align-items:center;flex-wrap:wrap;transition:all .3s ease}
+.buddy-card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,0.15)}
+.buddy-card::before{content:'';position:absolute;top:-40%;right:-20%;width:300px;height:300px;
+  border-radius:50%;pointer-events:none;transition:opacity .3s}
+.buddy-card.rarity-Egg::before{background:radial-gradient(circle,rgba(150,150,150,0.05),transparent 60%)}
+.buddy-card.rarity-Common::before{background:radial-gradient(circle,rgba(200,200,200,0.06),transparent 60%)}
+.buddy-card.rarity-Uncommon::before{background:radial-gradient(circle,rgba(52,211,153,0.1),transparent 60%)}
+.buddy-card.rarity-Rare::before{background:radial-gradient(circle,rgba(56,189,248,0.12),transparent 60%)}
+.buddy-card.rarity-Epic::before{background:radial-gradient(circle,rgba(192,132,252,0.15),transparent 60%);
+  animation:glow-pulse 3s ease infinite}
+.buddy-card.rarity-Legendary::before{background:radial-gradient(circle,rgba(251,191,36,0.18),transparent 60%);
+  animation:shimmer 2s ease infinite}
+@keyframes glow-pulse{0%,100%{opacity:0.7}50%{opacity:1}}
+@keyframes shimmer{0%{transform:translate(0,0) scale(1);opacity:0.7}
+  50%{transform:translate(5%,-5%) scale(1.1);opacity:1}100%{transform:translate(0,0) scale(1);opacity:0.7}}
+
+.buddy-sprite{position:relative;z-index:1}
+.buddy-sprite pre{font-family:var(--mono);font-size:14px;line-height:1.35;margin:0;
+  white-space:pre;letter-spacing:0.05em}
+.buddy-sprite.rarity-Uncommon pre{color:var(--green);text-shadow:0 0 12px rgba(52,211,153,0.3)}
+.buddy-sprite.rarity-Rare pre{color:var(--blue);text-shadow:0 0 12px rgba(56,189,248,0.3)}
+.buddy-sprite.rarity-Epic pre{color:var(--purple);text-shadow:0 0 16px rgba(192,132,252,0.4)}
+.buddy-sprite.rarity-Legendary pre{color:var(--yellow);text-shadow:0 0 20px rgba(251,191,36,0.5)}
+.buddy-sprite pre{color:var(--text)}
+
+.buddy-info{flex:1;min-width:240px;position:relative;z-index:1}
+.buddy-name{font-family:var(--display);font-size:20px;font-weight:700;letter-spacing:-0.02em;
+  margin-bottom:2px;display:flex;align-items:center;gap:8px}
+.buddy-meta{font-size:11px;color:var(--muted);margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.buddy-meta .rarity-badge{font-size:9px;padding:2px 8px;border-radius:4px;font-weight:700;
+  font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase}
+.rarity-badge.r-Egg{background:rgba(150,150,150,0.1);color:#888}
+.rarity-badge.r-Common{background:rgba(200,200,200,0.1);color:#aaa}
+.rarity-badge.r-Uncommon{background:var(--green-dim);color:var(--green);border:1px solid rgba(52,211,153,0.2)}
+.rarity-badge.r-Rare{background:var(--blue-dim);color:var(--blue);border:1px solid rgba(56,189,248,0.2)}
+.rarity-badge.r-Epic{background:var(--purple-dim);color:var(--purple);border:1px solid rgba(192,132,252,0.2)}
+.rarity-badge.r-Legendary{background:var(--yellow-dim);color:var(--yellow);border:1px solid rgba(251,191,36,0.2);
+  animation:glow-pulse 2s ease infinite}
+.mood-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.mood-Ecstatic{background:var(--yellow);box-shadow:0 0 6px var(--yellow)}
+.mood-Happy{background:var(--green);box-shadow:0 0 6px var(--green)}
+.mood-Content{background:var(--blue)}
+.mood-Worried{background:var(--red);box-shadow:0 0 6px var(--red)}
+.mood-Sleeping{background:var(--muted)}
+
+.xp-wrap{margin-bottom:14px}
+.xp-label{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);
+  font-family:var(--mono);margin-bottom:4px;letter-spacing:.05em}
+.xp-track{background:var(--surface-2);border-radius:6px;height:8px;overflow:hidden;
+  border:1px solid var(--border)}
+.xp-fill{height:100%;border-radius:5px;transition:width 1s cubic-bezier(.22,1,.36,1);
+  background:linear-gradient(90deg,var(--green),var(--blue))}
+
+.buddy-stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:14px}
+.stat-cell{text-align:center;background:var(--surface-2);border-radius:8px;padding:8px 4px;
+  border:1px solid var(--border);transition:border-color .2s}
+.stat-cell:hover{border-color:var(--border-light)}
+.stat-label{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;
+  font-weight:600;margin-bottom:4px}
+.stat-gauge{position:relative;width:36px;height:36px;margin:0 auto 4px}
+.stat-gauge svg{transform:rotate(-90deg)}
+.stat-gauge circle{fill:none;stroke-width:3}
+.stat-gauge .bg{stroke:var(--surface-3)}
+.stat-gauge .fg{stroke-linecap:round;transition:stroke-dashoffset 1s ease}
+.stat-val{font-family:var(--display);font-size:13px;font-weight:700;letter-spacing:-0.02em}
+
+.buddy-speech{font-size:11px;color:var(--muted);font-style:italic;padding:10px 14px;
+  background:var(--surface-2);border-radius:8px;border:1px solid var(--border);
+  position:relative;margin-top:2px}
+.buddy-speech::before{content:'';position:absolute;left:16px;top:-5px;width:10px;height:10px;
+  background:var(--surface-2);border-left:1px solid var(--border);border-top:1px solid var(--border);
+  transform:rotate(45deg)}
 .footer{text-align:center;padding:28px 20px;color:var(--muted);font-size:10px;
   border-top:1px solid var(--border);margin-top:28px}
 .footer a{color:var(--green);text-decoration:none;transition:.2s}.footer a:hover{opacity:.8}
@@ -148,12 +224,16 @@ tr:hover td{background:var(--surface-2)}
 .hero>:nth-child(3){animation-delay:.09s}.hero>:nth-child(4){animation-delay:.12s}
 
 @media(max-width:1024px){.hero{grid-template-columns:1fr 1fr}.r21,.r12,.r11,.r3{grid-template-columns:1fr}
-  .ig{grid-template-columns:repeat(3,1fr)}.sg{grid-template-columns:repeat(2,1fr)}}
+  .ig{grid-template-columns:repeat(3,1fr)}.sg{grid-template-columns:repeat(2,1fr)}
+  .buddy-card{flex-direction:column;text-align:center}
+  .buddy-stats-grid{grid-template-columns:repeat(5,1fr)}}
 @media(max-width:640px){.hero{grid-template-columns:1fr}
   header{flex-direction:column;gap:8px;position:static}
   .hdr-r{flex-wrap:wrap;justify-content:center}
   .ig{grid-template-columns:repeat(2,1fr)}.sg{grid-template-columns:1fr}
-  .src-grid{grid-template-columns:1fr}.src-item:first-child{border-right:none;border-bottom:1px solid var(--border)}}
+  .src-grid{grid-template-columns:1fr}.src-item:first-child{border-right:none;border-bottom:1px solid var(--border)}
+  .buddy-stats-grid{grid-template-columns:repeat(3,1fr)}
+  .buddy-meta{justify-content:center}}
 </style>
 </head>
 <body>
@@ -184,6 +264,14 @@ tr:hover td{background:var(--surface-2)}
   <div class="footer">betterCTX — The Intelligence Layer for AI Coding · <a href="https://betterctx.com" target="_blank">betterctx.com</a></div>
 </div>
 <script>
+const _origFetch=window.fetch;
+window.fetch=function(url,opts){
+  if(window.__BETTER_CTX_TOKEN__&&typeof url==='string'&&url.startsWith('/api/')){
+    opts=opts||{};opts.headers=opts.headers||{};
+    opts.headers['Authorization']='Bearer '+window.__BETTER_CTX_TOKEN__;
+  }
+  return _origFetch.call(this,url,opts);
+};
 const $=id=>document.getElementById(id);
 let aOn=true,aI=null,cR=0,raw=null,built=false,ch={},pH='',showAll=false;
 
@@ -244,6 +332,47 @@ function build(){
       </div>
     </div>
 
+    <div class="row r1" id="buddySection" style="display:none">
+      <div class="buddy-card" id="buddyCard">
+        <div class="buddy-sprite" id="buddySpriteWrap">
+          <pre id="buddyAscii"></pre>
+        </div>
+        <div class="buddy-info">
+          <div class="buddy-name">
+            <span id="buddyName"></span>
+            <span class="rarity-badge" id="buddyRarityBadge"></span>
+          </div>
+          <div class="buddy-meta">
+            <span id="buddySpecies"></span> &middot; Lv.<span id="buddyLevel"></span>
+            &middot; <span class="mood-dot" id="buddyMoodDot"></span> <span id="buddyMood"></span>
+            &middot; <span id="buddyStreak"></span>d streak
+          </div>
+          <div class="xp-wrap">
+            <div class="xp-label"><span>XP <span id="buddyXp">0</span></span><span>Next Lv. <span id="buddyXpNext">0</span></span></div>
+            <div class="xp-track"><div class="xp-fill" id="buddyXpBar" style="width:0%"></div></div>
+          </div>
+          <div class="buddy-stats-grid">
+            <div class="stat-cell"><div class="stat-label">CMP</div>
+              <div class="stat-gauge"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" id="sgComp" cx="18" cy="18" r="15.9" stroke="var(--green)" stroke-dasharray="100" stroke-dashoffset="100"/></svg></div>
+              <div class="stat-val" style="color:var(--green)" id="bsComp">0</div></div>
+            <div class="stat-cell"><div class="stat-label">VIG</div>
+              <div class="stat-gauge"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" id="sgVig" cx="18" cy="18" r="15.9" stroke="var(--yellow)" stroke-dasharray="100" stroke-dashoffset="100"/></svg></div>
+              <div class="stat-val" style="color:var(--yellow)" id="bsVig">0</div></div>
+            <div class="stat-cell"><div class="stat-label">END</div>
+              <div class="stat-gauge"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" id="sgEnd" cx="18" cy="18" r="15.9" stroke="var(--purple)" stroke-dasharray="100" stroke-dashoffset="100"/></svg></div>
+              <div class="stat-val" style="color:var(--purple)" id="bsEnd">0</div></div>
+            <div class="stat-cell"><div class="stat-label">WIS</div>
+              <div class="stat-gauge"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" id="sgWis" cx="18" cy="18" r="15.9" stroke="var(--blue)" stroke-dasharray="100" stroke-dashoffset="100"/></svg></div>
+              <div class="stat-val" style="color:var(--blue)" id="bsWis">0</div></div>
+            <div class="stat-cell"><div class="stat-label">EXP</div>
+              <div class="stat-gauge"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" id="sgExp" cx="18" cy="18" r="15.9" stroke="var(--text)" stroke-dasharray="100" stroke-dashoffset="100"/></svg></div>
+              <div class="stat-val" id="bsExp">0</div></div>
+          </div>
+          <div class="buddy-speech" id="buddySpeech"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="row r21">
       <div class="card"><h3>Cumulative Token Savings</h3><canvas id="cCum"></canvas></div>
       <div class="card">
@@ -297,6 +426,36 @@ function build(){
         </table>
         </div>
         <div style="text-align:center"><button class="tbtn" id="cTog" onclick="togC()"></button></div>
+      </div>
+    </div>
+
+    <div class="row r1" id="gotchaSection" style="display:none">
+      <div class="card">
+        <h3>🧠 Bug Memory</h3>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px">
+          <div class="hc" style="flex:1;min-width:80px">
+            <div class="hv" style="color:var(--green);font-size:20px" data-live id="gPrevented">0</div>
+            <div class="hl">Bugs Prevented</div>
+          </div>
+          <div class="hc" style="flex:1;min-width:80px">
+            <div class="hv" style="color:var(--purple);font-size:20px" data-live id="gActive">0</div>
+            <div class="hl">Active Gotchas</div>
+          </div>
+          <div class="hc" style="flex:1;min-width:80px">
+            <div class="hv" style="color:var(--blue);font-size:20px" data-live id="gDetected">0</div>
+            <div class="hl">Errors Detected</div>
+          </div>
+          <div class="hc" style="flex:1;min-width:80px">
+            <div class="hv" style="color:var(--yellow);font-size:20px" data-live id="gCorrelated">0</div>
+            <div class="hl">Fixes Correlated</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Category</th><th>Trigger</th><th>Resolution</th><th class="r">Seen</th><th class="r">Conf</th><th class="r">Prevented</th></tr></thead>
+          <tbody id="tG"></tbody>
+        </table>
+        </div>
       </div>
     </div>
   `;
@@ -411,7 +570,42 @@ async function checkVersion(){
   try{const r=await fetch('/api/version');const v=await r.json();
   if(v.update_available){$('ubCur').textContent='v'+v.current;$('ubNew').textContent='v'+v.latest;$('updateBanner').style.display='block'}}catch(e){}}
 
-async function loadAll(){await load();await checkVersion()}
+async function loadGotchas(){try{const r=await fetch('/api/gotchas');const g=await r.json();
+  if(!g||!g.gotchas)return;const sec=$('gotchaSection');
+  if(g.gotchas.length>0||g.stats.total_errors_detected>0){sec.style.display='';
+    lv('gPrevented',g.stats.total_prevented||0);lv('gActive',g.gotchas.length);
+    lv('gDetected',g.stats.total_errors_detected||0);lv('gCorrelated',g.stats.total_fixes_correlated||0);
+    const tb=$('tG');if(tb){tb.innerHTML='';
+      g.gotchas.slice(0,20).forEach(gt=>{const tr=document.createElement('tr');
+        const sev=gt.severity==='Critical'?'🔴':gt.severity==='Warning'?'🟡':'🔵';
+        const conf=Math.round((gt.confidence||0)*100);
+        const cat=(gt.category||'').toLowerCase();
+        tr.innerHTML=`<td>${sev} ${cat}</td><td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(gt.trigger)}</td><td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(gt.resolution)}</td><td class="r">${gt.occurrences||1}x</td><td class="r">${conf}%</td><td class="r">${gt.prevented_count||0}</td>`;
+        tb.appendChild(tr)})}}else{sec.style.display='none'}}catch(e){}}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+async function loadBuddy(){try{const r=await fetch('/api/buddy');const b=await r.json();
+  if(!b||!b.name)return;const sec=$('buddySection');sec.style.display='';
+  const card=$('buddyCard');card.className='buddy-card rarity-'+b.rarity;
+  $('buddyName').textContent=b.name;$('buddySpecies').textContent=b.species;
+  $('buddyLevel').textContent=b.level;$('buddyMood').textContent=b.mood;
+  $('buddyStreak').textContent=b.streak_days||0;
+  $('buddySpeech').textContent='"'+b.speech+'"';
+  const rb=$('buddyRarityBadge');rb.textContent=b.rarity;rb.className='rarity-badge r-'+b.rarity;
+  const md=$('buddyMoodDot');md.className='mood-dot mood-'+b.mood;
+  const sw=$('buddySpriteWrap');sw.className='buddy-sprite rarity-'+b.rarity;
+  if(b.ascii_art&&b.ascii_art.length>0){$('buddyAscii').textContent=b.ascii_art.join('\n')}
+  const xpPct=b.xp_next_level>0?Math.min(100,Math.round(b.xp/b.xp_next_level*100)):0;
+  $('buddyXp').textContent=fmtN(b.xp);$('buddyXpNext').textContent=fmtN(b.xp_next_level);
+  $('buddyXpBar').style.width=xpPct+'%';
+  if(b.stats){const st=b.stats;
+    setStat('Comp',st.compression);setStat('Vig',st.vigilance);
+    setStat('End',st.endurance);setStat('Wis',st.wisdom);setStat('Exp',st.experience)}
+  }catch(e){}}
+function fmtN(n){if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';
+  if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toString()}
+function setStat(id,val){$('bs'+id).textContent=val;
+  const c=$('sg'+id);if(c){c.setAttribute('stroke-dashoffset',100-val)}}
+async function loadAll(){await load();await loadBuddy();await loadGotchas();await checkVersion()}
 loadAll();startA();loadVer();
 </script>
 </body>

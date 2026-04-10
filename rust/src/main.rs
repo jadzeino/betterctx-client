@@ -1,7 +1,7 @@
 use anyhow::Result;
 use better_ctx::{
-    cli, cloud_client, core, dashboard, doctor, mcp_stdio, report, setup, shell, terminal_ui,
-    tools, uninstall,
+    cli, cloud_client, core, dashboard, doctor, heatmap, hook_handlers, mcp_stdio, report, setup,
+    shell, terminal_ui, tools, uninstall,
 };
 
 fn main() {
@@ -126,6 +126,43 @@ fn main() {
                 cli::cmd_filter(&rest);
                 return;
             }
+            "heatmap" => {
+                heatmap::cmd_heatmap(&rest);
+                return;
+            }
+            "graph" => {
+                let mut action = "build";
+                let mut path_arg: Option<&str> = None;
+                for arg in &rest {
+                    if arg == "build" {
+                        action = "build";
+                    } else {
+                        path_arg = Some(arg.as_str());
+                    }
+                }
+                let root = path_arg
+                    .map(String::from)
+                    .or_else(|| {
+                        std::env::current_dir()
+                            .ok()
+                            .map(|p| p.to_string_lossy().to_string())
+                    })
+                    .unwrap_or_else(|| ".".to_string());
+                match action {
+                    "build" => {
+                        let index = core::graph_index::load_or_build(&root);
+                        println!(
+                            "Graph built: {} files, {} edges",
+                            index.files.len(),
+                            index.edges.len()
+                        );
+                    }
+                    _ => {
+                        eprintln!("Usage: better-ctx graph [build] [path]");
+                    }
+                }
+                return;
+            }
             "session" => {
                 cli::cmd_session();
                 return;
@@ -150,6 +187,10 @@ fn main() {
                 cli::cmd_stats(&rest);
                 return;
             }
+            "cache" => {
+                cli::cmd_cache(&rest);
+                return;
+            }
             "theme" => {
                 cli::cmd_theme(&rest);
                 return;
@@ -168,6 +209,27 @@ fn main() {
             }
             "doctor" => {
                 doctor::run();
+                return;
+            }
+            "gotchas" | "bugs" => {
+                cmd_gotchas(&rest);
+                return;
+            }
+            "buddy" | "pet" => {
+                cmd_buddy(&rest);
+                return;
+            }
+            "hook" => {
+                let action = rest.first().map(|s| s.as_str()).unwrap_or("help");
+                match action {
+                    "rewrite" => hook_handlers::handle_rewrite(),
+                    "redirect" => hook_handlers::handle_redirect(),
+                    _ => {
+                        eprintln!("Usage: better-ctx hook <rewrite|redirect>");
+                        eprintln!("  Internal commands used by agent hooks (Claude, Cursor, etc.)");
+                        std::process::exit(1);
+                    }
+                }
                 return;
             }
             "report-issue" | "report" => {
@@ -304,7 +366,7 @@ fn print_help() {
     println!(
         "better-ctx {version} — The Intelligence Layer for AI Coding
 
-90+ compression patterns | 25 MCP tools | Context Continuity Protocol
+90+ compression patterns | 28 MCP tools | Context Continuity Protocol
 
 USAGE:
     better-ctx                       Start MCP server (stdio)
@@ -343,6 +405,8 @@ COMMANDS:
     tee [list|clear|show <file>|last] Manage output tee files (~/.better-ctx/tee/)
     slow-log [list|clear]          Show/clear slow command log (~/.better-ctx/slow-commands.log)
     update [--check]               Self-update better-ctx binary from GitHub Releases
+    gotchas [list|clear|export|stats] Bug Memory: view/manage auto-detected error patterns
+    buddy [show|stats|ascii|json]  Token Guardian: your data-driven coding companion
     doctor                         Run installation and environment diagnostics
     uninstall                      Remove shell hook, MCP configs, and data directory
 
@@ -792,6 +856,87 @@ fn animate_kpi_countup(t: &core::theme::Theme) {
     }
     print!("\x1b[1A\x1b[K");
     let _ = stdout.flush();
+}
+
+fn cmd_gotchas(args: &[String]) {
+    let action = args.first().map(|s| s.as_str()).unwrap_or("list");
+    let project_root = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+
+    match action {
+        "list" | "ls" => {
+            let store = core::gotcha_tracker::GotchaStore::load(&project_root);
+            println!("{}", store.format_list());
+        }
+        "clear" => {
+            let mut store = core::gotcha_tracker::GotchaStore::load(&project_root);
+            let count = store.gotchas.len();
+            store.clear();
+            let _ = store.save(&project_root);
+            println!("Cleared {count} gotchas.");
+        }
+        "export" => {
+            let store = core::gotcha_tracker::GotchaStore::load(&project_root);
+            match serde_json::to_string_pretty(&store.gotchas) {
+                Ok(json) => println!("{json}"),
+                Err(e) => eprintln!("Export failed: {e}"),
+            }
+        }
+        "stats" => {
+            let store = core::gotcha_tracker::GotchaStore::load(&project_root);
+            println!("Bug Memory Stats:");
+            println!("  Active gotchas:      {}", store.gotchas.len());
+            println!(
+                "  Errors detected:     {}",
+                store.stats.total_errors_detected
+            );
+            println!(
+                "  Fixes correlated:    {}",
+                store.stats.total_fixes_correlated
+            );
+            println!("  Bugs prevented:      {}", store.stats.total_prevented);
+            println!("  Promoted to knowledge: {}", store.stats.gotchas_promoted);
+            println!("  Decayed/archived:    {}", store.stats.gotchas_decayed);
+            println!("  Session logs:        {}", store.error_log.len());
+        }
+        _ => {
+            println!("Usage: better-ctx gotchas [list|clear|export|stats]");
+        }
+    }
+}
+
+fn cmd_buddy(args: &[String]) {
+    let cfg = core::config::Config::load();
+    if !cfg.buddy_enabled {
+        println!("Buddy is disabled. Enable with: better-ctx config buddy_enabled true");
+        return;
+    }
+
+    let action = args.first().map(|s| s.as_str()).unwrap_or("show");
+    let buddy = core::buddy::BuddyState::compute();
+    let theme = core::theme::load_theme(&cfg.theme);
+
+    match action {
+        "show" | "status" => {
+            println!("{}", core::buddy::format_buddy_full(&buddy, &theme));
+        }
+        "stats" => {
+            println!("{}", core::buddy::format_buddy_full(&buddy, &theme));
+        }
+        "ascii" => {
+            for line in &buddy.ascii_art {
+                println!("  {line}");
+            }
+        }
+        "json" => match serde_json::to_string_pretty(&buddy) {
+            Ok(json) => println!("{json}"),
+            Err(e) => eprintln!("JSON error: {e}"),
+        },
+        _ => {
+            println!("Usage: better-ctx buddy [show|stats|ascii|json]");
+        }
+    }
 }
 
 fn cmd_upgrade() {

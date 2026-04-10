@@ -371,6 +371,64 @@ fn extract_keywords(query: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn classify_complexity(
+    query: &str,
+    classification: &TaskClassification,
+) -> super::adaptive::TaskComplexity {
+    use super::adaptive::TaskComplexity;
+
+    let q = query.to_lowercase();
+    let word_count = q.split_whitespace().count();
+    let target_count = classification.targets.len();
+
+    let has_multi_file = target_count >= 3;
+    let has_cross_cutting = q.contains("all files")
+        || q.contains("across")
+        || q.contains("everywhere")
+        || q.contains("every")
+        || q.contains("migration")
+        || q.contains("architecture");
+
+    let is_simple = word_count < 8
+        && target_count <= 1
+        && matches!(
+            classification.task_type,
+            TaskType::Generate | TaskType::Config
+        );
+
+    if is_simple {
+        TaskComplexity::Mechanical
+    } else if has_multi_file || has_cross_cutting {
+        TaskComplexity::Architectural
+    } else {
+        TaskComplexity::Standard
+    }
+}
+
+pub fn detect_multi_intent(query: &str) -> Vec<TaskClassification> {
+    let delimiters = [" and then ", " then ", " also ", " + ", ". "];
+
+    let mut parts: Vec<&str> = vec![query];
+    for delim in &delimiters {
+        let mut new_parts = Vec::new();
+        for part in &parts {
+            for sub in part.split(delim) {
+                let trimmed = sub.trim();
+                if !trimmed.is_empty() {
+                    new_parts.push(trimmed);
+                }
+            }
+        }
+        parts = new_parts;
+    }
+
+    if parts.len() <= 1 {
+        return vec![classify(query)];
+    }
+
+    parts.iter().map(|part| classify(part)).collect()
+}
+
 pub fn format_briefing_header(classification: &TaskClassification) -> String {
     format!(
         "[TASK:{} CONF:{:.0}% TARGETS:{} KW:{}]",
@@ -446,5 +504,37 @@ mod tests {
         let r = classify("xyz qqq bbb");
         assert_eq!(r.task_type, TaskType::Explore);
         assert!(r.confidence < 0.5);
+    }
+
+    #[test]
+    fn multi_intent_detection() {
+        let results = detect_multi_intent("fix the bug in auth.rs and then write unit tests");
+        assert!(results.len() >= 2);
+        assert_eq!(results[0].task_type, TaskType::FixBug);
+        assert_eq!(results[1].task_type, TaskType::Test);
+    }
+
+    #[test]
+    fn single_intent_no_split() {
+        let results = detect_multi_intent("fix the bug in auth.rs");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].task_type, TaskType::FixBug);
+    }
+
+    #[test]
+    fn complexity_mechanical() {
+        let r = classify("add a comment");
+        let c = classify_complexity("add a comment", &r);
+        assert_eq!(c, super::super::adaptive::TaskComplexity::Mechanical);
+    }
+
+    #[test]
+    fn complexity_architectural() {
+        let r = classify("refactor auth across all files and update the migration");
+        let c = classify_complexity(
+            "refactor auth across all files and update the migration",
+            &r,
+        );
+        assert_eq!(c, super::super::adaptive::TaskComplexity::Architectural);
     }
 }

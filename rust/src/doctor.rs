@@ -172,6 +172,15 @@ fn rc_contains_better_ctx(path: &PathBuf) -> bool {
     }
 }
 
+fn rc_has_pipe_guard(path: &PathBuf) -> bool {
+    match std::fs::read_to_string(path) {
+        Ok(s) => {
+            s.contains("! -t 1") || s.contains("isatty stdout") || s.contains("IsOutputRedirected")
+        }
+        Err(_) => false,
+    }
+}
+
 fn shell_aliases_outcome() -> Outcome {
     let home = match dirs::home_dir() {
         Some(h) => h,
@@ -186,19 +195,29 @@ fn shell_aliases_outcome() -> Outcome {
     };
 
     let mut parts = Vec::new();
+    let mut needs_update = Vec::new();
 
     let zsh = home.join(".zshrc");
     if rc_contains_better_ctx(&zsh) {
         parts.push(format!("{DIM}~/.zshrc{RST}"));
+        if !rc_has_pipe_guard(&zsh) {
+            needs_update.push("~/.zshrc");
+        }
     }
     let bash = home.join(".bashrc");
     if rc_contains_better_ctx(&bash) {
         parts.push(format!("{DIM}~/.bashrc{RST}"));
+        if !rc_has_pipe_guard(&bash) {
+            needs_update.push("~/.bashrc");
+        }
     }
 
     let fish = home.join(".config").join("fish").join("config.fish");
     if rc_contains_better_ctx(&fish) {
         parts.push(format!("{DIM}~/.config/fish/config.fish{RST}"));
+        if !rc_has_pipe_guard(&fish) {
+            needs_update.push("~/.config/fish/config.fish");
+        }
     }
 
     #[cfg(windows)]
@@ -213,8 +232,14 @@ fn shell_aliases_outcome() -> Outcome {
             .join("Microsoft.PowerShell_profile.ps1");
         if rc_contains_better_ctx(&ps_profile) {
             parts.push(format!("{DIM}PowerShell profile{RST}"));
+            if !rc_has_pipe_guard(&ps_profile) {
+                needs_update.push("PowerShell profile");
+            }
         } else if rc_contains_better_ctx(&ps_profile_legacy) {
             parts.push(format!("{DIM}WindowsPowerShell profile{RST}"));
+            if !rc_has_pipe_guard(&ps_profile_legacy) {
+                needs_update.push("WindowsPowerShell profile");
+            }
         }
     }
 
@@ -227,6 +252,14 @@ fn shell_aliases_outcome() -> Outcome {
         Outcome {
             ok: false,
             line: format!("{BOLD}Shell aliases{RST}  {RED}{hint}{RST}"),
+        }
+    } else if !needs_update.is_empty() {
+        Outcome {
+            ok: false,
+            line: format!(
+                "{BOLD}Shell aliases{RST}  {YELLOW}outdated hook in {} — run {BOLD}better-ctx init --global{RST}{YELLOW} to fix (pipe guard missing){RST}",
+                needs_update.join(", ")
+            ),
         }
     } else {
         Outcome {
@@ -324,6 +357,11 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
         name: "Verdent",
         display: "~/.verdent/mcp.json",
         path: home.join(".verdent").join("mcp.json"),
+    });
+    locations.push(McpLocation {
+        name: "Crush",
+        display: "~/.config/crush/crush.json",
+        path: home.join(".config").join("crush").join("crush.json"),
     });
 
     {
@@ -430,7 +468,7 @@ fn mcp_config_outcome() -> Outcome {
         Outcome {
             ok: false,
             line: format!(
-                "{BOLD}MCP config{RST}  {YELLOW}no MCP config found{RST}  {DIM}(checked: Cursor, Claude, Windsurf, Codex, Gemini, Antigravity, Zed){RST}"
+                "{BOLD}MCP config{RST}  {YELLOW}no MCP config found{RST}  {DIM}(checked: Cursor, Claude, Windsurf, Codex, Gemini, Antigravity, Crush, Zed){RST}"
             ),
         }
     }
@@ -461,11 +499,24 @@ fn pi_outcome() -> Option<Outcome> {
                 .map(|o| String::from_utf8_lossy(&o.stdout).contains("pi-better-ctx"))
                 .unwrap_or(false);
 
-            if has_plugin {
+            let has_mcp = dirs::home_dir()
+                .map(|h| h.join(".pi/agent/mcp.json"))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .map(|c| c.contains("better-ctx"))
+                .unwrap_or(false);
+
+            if has_plugin && has_mcp {
                 Some(Outcome {
                     ok: true,
                     line: format!(
-                        "{BOLD}Pi Coding Agent{RST}  {GREEN}{version}, pi-better-ctx installed{RST}"
+                        "{BOLD}Pi Coding Agent{RST}  {GREEN}{version}, pi-better-ctx + MCP configured{RST}"
+                    ),
+                })
+            } else if has_plugin {
+                Some(Outcome {
+                    ok: true,
+                    line: format!(
+                        "{BOLD}Pi Coding Agent{RST}  {GREEN}{version}, pi-better-ctx installed{RST}  {DIM}(MCP not configured — embedded bridge active){RST}"
                     ),
                 })
             } else {
@@ -478,6 +529,36 @@ fn pi_outcome() -> Option<Outcome> {
             }
         }
         _ => None,
+    }
+}
+
+fn session_state_outcome() -> Outcome {
+    use crate::core::session::SessionState;
+
+    match SessionState::load_latest() {
+        Some(session) => {
+            let root = session
+                .project_root
+                .as_deref()
+                .unwrap_or("(not set)");
+            let cwd = session
+                .shell_cwd
+                .as_deref()
+                .unwrap_or("(not tracked)");
+            Outcome {
+                ok: true,
+                line: format!(
+                    "{BOLD}Session state{RST}  {GREEN}active{RST}  {DIM}root: {root}, cwd: {cwd}, v{}{RST}",
+                    session.version
+                ),
+            }
+        }
+        None => Outcome {
+            ok: true,
+            line: format!(
+                "{BOLD}Session state{RST}  {YELLOW}no active session{RST}  {DIM}(will be created on first tool call){RST}"
+            ),
+        },
     }
 }
 
@@ -647,7 +728,11 @@ pub fn run() {
     }
     print_check(&port);
 
-    // 9) Pi Coding Agent (optional)
+    // 9) Session state (project_root + shell_cwd)
+    let session_outcome = session_state_outcome();
+    print_check(&session_outcome);
+
+    // 10) Pi Coding Agent (optional)
     let pi = pi_outcome();
     if let Some(ref pi_check) = pi {
         if pi_check.ok {
@@ -656,7 +741,7 @@ pub fn run() {
         print_check(pi_check);
     }
 
-    let effective_total = if pi.is_some() { total + 1 } else { total };
+    let effective_total = if pi.is_some() { total + 2 } else { total + 1 };
     println!();
     println!("  {BOLD}{WHITE}Summary:{RST}  {GREEN}{passed}{RST}{DIM}/{effective_total}{RST} checks passed");
     println!("  {DIM}This binary: better-ctx {VERSION} (Cargo package version){RST}");

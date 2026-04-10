@@ -840,7 +840,15 @@ pub fn format_gain_themed(t: &Theme) -> String {
     o.push(box_line(""));
     o.push(format!("  {}", t.box_bottom(w)));
 
-    o.push(String::new());
+    // Token Guardian Buddy
+    {
+        let cfg = crate::core::config::Config::load();
+        if cfg.buddy_enabled {
+            let buddy = crate::core::buddy::BuddyState::compute();
+            o.push(crate::core::buddy::format_buddy_block(&buddy, t));
+        }
+    }
+
     o.push(String::new());
 
     let cost_title = t.section_title("Cost Breakdown");
@@ -981,6 +989,27 @@ pub fn format_gain_themed(t: &Theme) -> String {
         o.push(String::new());
     }
 
+    // Bug Memory stats
+    {
+        let project_root = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !project_root.is_empty() {
+            let gotcha_store = crate::core::gotcha_tracker::GotchaStore::load(&project_root);
+            if gotcha_store.stats.total_errors_detected > 0 || !gotcha_store.gotchas.is_empty() {
+                let a = t.accent.fg();
+                o.push(format!("    {a}🧠 Bug Memory{r}"));
+                o.push(format!(
+                    "    {m}   Active gotchas: {}{r}   Bugs prevented: {}{r}",
+                    gotcha_store.gotchas.len(),
+                    gotcha_store.stats.total_prevented,
+                    m = t.muted.fg(),
+                ));
+                o.push(String::new());
+            }
+        }
+    }
+
     let m = t.muted.fg();
     o.push(format!(
         "    {m}🐛 Found a bug? Run: better-ctx report-issue{r}"
@@ -988,6 +1017,7 @@ pub fn format_gain_themed(t: &Theme) -> String {
     o.push(format!(
         "    {m}📊 Help improve better-ctx: better-ctx contribute{r}"
     ));
+    o.push(format!("    {m}🧠 View bug memory: better-ctx gotchas{r}"));
 
     o.push(String::new());
     o.push(String::new());

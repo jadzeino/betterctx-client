@@ -298,6 +298,7 @@ fn is_tool_detected(target: &RulesTarget, home: &std::path::Path) -> bool {
         "Antigravity" => home.join(".gemini/antigravity").exists(),
         "Pi Coding Agent" => home.join(".pi").exists() || command_exists("pi"),
         "AWS Kiro" => home.join(".kiro").exists(),
+        "Crush" => home.join(".config/crush").exists() || command_exists("crush"),
         _ => false,
     }
 }
@@ -500,6 +501,11 @@ fn build_rules_targets(home: &std::path::Path) -> Vec<RulesTarget> {
         RulesTarget {
             name: "Verdent",
             path: home.join(".verdent/rules/better-ctx.md"),
+            format: RulesFormat::DedicatedMarkdown,
+        },
+        RulesTarget {
+            name: "Crush",
+            path: home.join(".config/crush/rules/better-ctx.md"),
             format: RulesFormat::DedicatedMarkdown,
         },
     ]
@@ -715,6 +721,6 @@ mod tests {
     fn target_count() {
         let home = std::path::PathBuf::from("/tmp/fake_home");
         let targets = build_rules_targets(&home);
-        assert_eq!(targets.len(), 21);
+        assert_eq!(targets.len(), 22);
     }
 }

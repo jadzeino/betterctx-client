@@ -155,11 +155,9 @@ pub fn attention_optimize(lines: &[&str], _alpha: f64, _beta: f64, _gamma: f64) 
         } else if i % 3 == 1 && end_idx > 2 * n / 3 {
             result[end_idx] = lines[*orig_idx].to_string();
             end_idx -= 1;
-        } else {
-            if mid_idx < 2 * n / 3 {
-                result[mid_idx] = lines[*orig_idx].to_string();
-                mid_idx += 1;
-            }
+        } else if mid_idx < 2 * n / 3 {
+            result[mid_idx] = lines[*orig_idx].to_string();
+            mid_idx += 1;
         }
     }
 

@@ -3,6 +3,475 @@
 All notable changes to better-ctx are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.0.0] — 2026-04-10
+
+### Major Release: Waves 1-5 — Intelligence Engine, Knowledge Graph, A2A Protocol, Adaptive Compression
+
+This is a **major release** bringing better-ctx from 28 to **34 MCP tools**, adding 8 read modes (new: `task`), persistent knowledge with temporal facts, multi-agent orchestration (A2A protocol), adaptive compression with Thompson Sampling bandits, and a complete fix for the context dropout bug (#73).
+
+---
+
+#### Wave 1 — Neural Token Optimization & Graph-Aware Filtering
+
+- **Neural token optimizer** — Attention-weighted compression that preserves high-information-density lines using Shannon entropy scoring with configurable thresholds.
+- **Graph-aware Information Bottleneck filter** — Integrates the project knowledge graph into `task` mode filtering, preserving lines that reference known entities (functions, types, modules) from the dependency graph.
+- **Task relevance scoring** — Renamed `information_bottleneck_filter` → `graph_aware_ib_filter` with KG-powered entity recognition for smarter context selection.
+
+#### Wave 2 — Context Reordering & Entropy Engine
+
+- **LITM-aware context reordering** — Reorders compressed output using a U-curve attention model (Lost-in-the-Middle), placing high-importance content at the start and end of context windows where LLM attention is strongest.
+- **Adaptive entropy thresholds** — Per-language BPE entropy thresholds with Kolmogorov complexity adjustment that auto-tune based on file characteristics.
+- **`task` read mode** — New compression mode that filters content through the Information Bottleneck principle, preserving only task-relevant lines. Achieves 65-85% savings while maintaining semantic completeness.
+
+#### Wave 3 — Persistent Knowledge & Episodic Memory
+
+- **`ctx_knowledge` tool** — Persistent project knowledge store with temporal validity, confidence decay, and contradiction detection. Actions: `remember`, `recall`, `timeline`, `rooms`, `search`, `wakeup`.
+- **Episodic memory** — Facts have temporal validity (`valid_from`/`valid_until`) and confidence scores that decay over time for unused knowledge.
+- **Procedural memory** — Cross-session knowledge that automatically surfaces relevant facts based on the current task context.
+- **Contradiction detection** — When storing a new fact that contradicts an existing one in the same category, the old fact is automatically superseded.
+
+#### Wave 4 — A2A Protocol & Multi-Agent Orchestration
+
+- **`ctx_task` tool** — Google A2A (Agent-to-Agent) protocol implementation with full task lifecycle: `create`, `assign`, `update`, `complete`, `cancel`, `list`, `get`.
+- **`ctx_cost` tool** — Cost attribution per agent with token tracking. Actions: `record`, `summary`, `by_agent`, `reset`.
+- **`ctx_heatmap` tool** — File access heatmap tracking read counts, compression ratios, and access patterns. Actions: `show`, `hot`, `cold`, `reset`.
+- **`ctx_impact` tool** — Measures the impact of code changes by analyzing dependency chains in the knowledge graph.
+- **`ctx_architecture` tool** — Generates architectural overviews from the project's dependency graph and module structure.
+- **Agent Card** — `.well-known/agent.json` endpoint for A2A agent discovery with capabilities, supported modes, and rate limits.
+- **Rate limiter** — Per-agent sliding window rate limiting (configurable, default 100 req/min).
+
+#### Wave 5 — Adaptive Compression (ACON + Bandits)
+
+- **ACON feedback loop** — Adaptive Compression via Outcome Normalization. Tracks compression outcomes (quality signals from LLM responses) and adjusts thresholds automatically.
+- **Thompson Sampling bandits** — Multi-armed bandit approach for selecting optimal compression parameters per file type and language. Uses Beta distributions with configurable priors.
+- **Quality signal detection** — Automatically detects quality signals in LLM responses (re-reads, error patterns, follow-up questions) to feed the ACON loop.
+- **`ctx_shell` cwd tracking** — Shell working directory is now tracked across calls. `cd` commands are parsed and persisted in the session. New `cwd` parameter for explicit directory control.
+
+#### Fix: Context Dropout Bug (#73)
+
+All five root causes of the "better-ctx loses context after initial read phase" bug have been fixed:
+
+- **Monorepo-aware `project_root`** — `detect_project_root()` now finds the outermost ancestor with a project marker (`.git`, `Cargo.toml`, `package.json`, `go.work`, `pnpm-workspace.yaml`, `nx.json`, `turbo.json`, etc.), not the nearest `.git`.
+- **`ctx_shell` cwd persistence** — New `shell_cwd` field in session state. `cd` commands are parsed and the working directory persists across `ctx_shell` calls. Priority: explicit `cwd` arg → session `shell_cwd` → `project_root` → process cwd.
+- **`ctx_overview`/`ctx_preload` root fallback** — Both tools now fall back to `session.project_root` when no `path` parameter is given (previously defaulted to server process cwd).
+- **Relative path resolution** — All 15+ path-based tools now use `resolve_path()` which tries: original path → `project_root` + relative → `shell_cwd` + relative → fallback.
+- **Windows shell chaining** — `;` in commands is automatically converted to `&&` when running under `cmd.exe`.
+
+#### Improved — Diagnostics
+
+- **`better-ctx doctor`** — New session state check showing `project_root`, `shell_cwd`, and session version.
+
+#### Stats
+
+- **34 MCP tools** (was 28)
+- **8 read modes** (was 7, new: `task`)
+- **656+ unit tests** passing
+- **14 integration tests** passing
+- **24 supported editors/AI tools**
+
+## [2.21.11] — 2026-04-09
+
+### Fix: Dashboard, Doctor, and MCP Reliability (#72)
+
+#### Fixed — Doctor gave false positives for broken MCP configs
+- **MCP JSON validation** — `doctor` now validates the actual JSON structure of each MCP config file instead of just checking for the string "better-ctx". Checks for `mcpServers` → `better-ctx` → `command` fields, verifies the binary path exists, and reports **per-IDE** status (valid vs. broken configs).
+- **Honest stats check** — A missing `stats.json` is now reported as a warning ("MCP server has not been used yet") instead of counting as a passed check.
+
+#### Fixed — Dashboard showed empty state without guidance
+- The empty state now includes an actionable **troubleshooting checklist** with IDE-specific steps (Cursor reload, Claude Code init, config validation).
+
+#### Fixed — No session created until first tool call batch
+- A session is now created immediately on MCP `initialize`, so `doctor --report` always shows session info even before any tools are used.
+
+#### Fixed — Tool calls only logged when >100ms
+- All tool calls are now logged regardless of duration. Previously, fast calls were silently dropped, making the tool call log appear empty.
+
+#### Fixed — macOS binary hangs at `_dyld_start` after install
+- On macOS, copying the binary (via `cp`, `install`, or download) could strip the ad-hoc code signature, causing the dynamic linker to hang indefinitely on startup. Both `install.sh` and the self-updater now run `xattr -cr` + `codesign --force --sign -` after placing the binary.
+
+## [2.21.10] — 2026-04-09
+
+### Fix: Auth/Device Code Flow Output Preserved
+
+#### Fixed — OAuth device code output no longer compressed (#71)
+- **Auth flow detection** — New `contains_auth_flow()` function detects OAuth device code flow output using a two-tier approach:
+  - **Strong signals** (match alone): `devicelogin`, `deviceauth`, `device_code`, `device code`, `device-code`, `verification_uri`, `user_code`, `one-time code`
+  - **Weak signals** (require URL in same output): `enter the code`, `use a web browser to open`, `verification code`, `waiting for authentication`, `authorize this device`, and 10 more patterns
+- **Shell hook passthrough** — 21 auth commands added to `BUILTIN_PASSTHROUGH`: `az login`, `gh auth`, `gcloud auth`, `aws sso`, `firebase login`, `vercel login`, `heroku login`, `flyctl auth`, `vault login`, `kubelogin`, `--use-device-code`, and more. These bypass compression entirely.
+- **MCP tool passthrough** — `ctx_shell::handle()` now checks output for auth flows before compression. If detected, full output is preserved with a `[better-ctx: auth/device-code flow detected]` note.
+- **Shell hook buffered path** — `compress_if_beneficial()` also checks for auth flows before any compression, covering the `exec_buffered` path when stdout is not a TTY.
+
+#### Impact
+Previously, when Codex or Claude Code ran an auth command (e.g. `az login --use-device-code`), the device code was hidden from the user because better-ctx compressed the output. Now the full output including auth codes is preserved.
+
+**Workaround for older versions:** Add `excluded_commands = ["az login"]` to `~/.better-ctx/config.toml`, or prefix commands with `BETTER_CTX_DISABLED=1`.
+
+## [2.21.9] — 2026-04-09
+
+### First-Class MCP Support for Pi Coding Agent
+
+#### Added — pi-better-ctx v2.0.0 with Embedded MCP Bridge
+- **Embedded MCP client** — pi-better-ctx now spawns the better-ctx binary as an MCP server (JSON-RPC over stdio) and registers all 20+ advanced tools (ctx_session, ctx_knowledge, ctx_semantic_search, ctx_overview, ctx_compress, ctx_metrics, ctx_agent, ctx_graph, ctx_discover, ctx_context, ctx_preload, ctx_delta, ctx_edit, ctx_dedup, ctx_fill, ctx_intent, ctx_response, ctx_wrapped, ctx_benchmark, ctx_analyze, ctx_cache, ctx_execute) as native Pi tools.
+- **Automatic pi-mcp-adapter compatibility** — If better-ctx is already configured in `~/.pi/agent/mcp.json` (via pi-mcp-adapter), the embedded bridge is skipped to avoid duplicate tool registration.
+- **Dynamic tool discovery** — Tool schemas come directly from the MCP server at runtime, not hardcoded. The `disabled_tools` config is respected.
+- **Auto-reconnect** — If the MCP server process crashes, the bridge reconnects automatically (3 attempts with exponential backoff). CLI-based tools (bash, read, grep, find, ls) continue working regardless.
+- **`/better-ctx` command enhanced** — Now shows binary path, MCP bridge status (embedded vs. adapter), and list of registered MCP tools.
+
+#### Added — Pi auto-detection in `better-ctx setup`
+- **Pi Coding Agent** is now auto-detected alongside Cursor, Claude Code, VS Code, Zed, and all other supported editors. Running `better-ctx setup` writes `~/.pi/agent/mcp.json` automatically.
+- **`better-ctx init --agent pi`** now also writes the MCP server config to `~/.pi/agent/mcp.json` with `lifecycle: lazy` and `directTools: true`.
+
+#### Improved — Pi diagnostics
+- **`better-ctx doctor`** now shows three Pi states: "pi-better-ctx + MCP configured", "pi-better-ctx installed (embedded bridge active)", or "not installed".
+
+#### Documentation
+- **README** for pi-better-ctx completely rewritten with MCP tools table, pi-mcp-adapter compatibility guide, and `disabled_tools` configuration.
+- **PI_AGENTS.md** template updated with MCP tools section.
+
+## [2.21.8] — 2026-04-09
+
+### Self-Updater Shell Alias Refresh + Thinking Budget Tuning
+
+#### Fixed — `better-ctx update` now refreshes shell aliases automatically
+- **Shell alias auto-refresh** — `post_update_refresh()` now detects all shell configs (`~/.zshrc`, `~/.bashrc`, `config.fish`, PowerShell profile) with better-ctx hooks and rewrites them with the latest `_lc()` function. Previously, `better-ctx update` only refreshed AI tool hooks (Claude, Cursor, Gemini, Codex) but left shell aliases untouched, meaning users had to manually run `better-ctx setup` to get new hook logic like the pipe guard.
+- **Multi-shell support** — If a user has hooks in both `.zshrc` and `.bashrc`, both are now updated (previously only the first match was handled).
+- **Post-update message** — Now explicitly tells users to `source ~/.zshrc` or restart their terminal.
+
+#### Changed — Thinking Budget Tuning
+- `FixBug` intent: Minimal → **Medium** (bug fixes benefit from deeper reasoning)
+- `Explore` intent: Medium → **Minimal** (exploration is lightweight)
+- `Debug` intent: Medium → **Trace** (debugging needs full chain-of-thought)
+- `Review` intent: Medium → **Trace** (code review needs thorough analysis)
+
+#### Improved — README & Deploy Checklist
+- **README** — Added "Updating better-ctx" section with all update methods, added pipe guard troubleshooting entry.
+- **Deploy checklist** — Added "Shell Hook Refresh", "README / GitHub Updates" sections, and two new common pitfalls.
+
+## [2.21.7] — 2026-04-09
+
+### Cleanup + Website Redesign
+
+#### Changed — Remove Hook E2E Test Suite
+- **Removed `hook_e2e_tests.rs`** — The hook E2E test file and its corresponding CI workflow (`hook-integration`) have been removed. The pipe guard behavior is already covered by the integration tests in `integration_tests.rs` and the unit tests in `cli.rs`. This eliminates a redundant CI job that depended on `generate_rewrite_script`, simplifying the test matrix.
+
+#### Changed — Website: LeanCTL Section Redesigned
+- **Consistent page design** — The LeanCTL ecosystem section on the homepage now uses the same visual patterns (compare-cards, layer-cards, stats-grid) as the rest of the page, replacing the custom TUI terminal mockup with ~150 lines of dedicated CSS.
+- **Real product facts** — Compare cards show concrete token savings from leanctl.com (4,200 → 48 tokens for file reads, 847 → 42 for test output, 4,200 → ~13 for re-reads).
+- **Three feature cards** — "23 Built-in Tools", "Thinking Steering", "Bring Your Own Key" in the standard layer-card layout.
+- **Stats grid** — "up to 90% savings", "23 tools", "8 compression modes", "0 data sent to us".
+
+#### Changed — Navigation: Dedicated Ecosystem Dropdown
+- **New top-level nav item** — "Ecosystem" mega dropdown with two columns: "AI Agents" (LeanCTL) and "Community" (GitHub, Discord, Blog).
+- **Product dropdown cleaned** — Removed the ecosystem column from the Product mega dropdown (now 3 columns instead of 4).
+- **Mobile menu updated** — Ecosystem section with LeanCTL, GitHub, Discord links.
+
+#### i18n
+- All 11 locale files updated with new ecosystem keys (en/de with translations, others with English fallbacks).
+
+## [2.21.6] — 2026-04-08
+
+### Shell Hook Pipe Guard — Fix `curl | sh` Broken by better-ctx
+
+#### Fixed — Piped commands corrupted by better-ctx compression
+- **Pipe guard for Bash/Zsh** — `_lc()` now checks `[ ! -t 1 ]` (stdout is not a terminal) before routing through better-ctx. When piped (e.g. `curl -fsSL https://example.com/install.sh | sh`), commands run directly without compression. Previously, better-ctx would buffer and compress the output, corrupting install scripts and other piped data.
+- **Pipe guard for Fish** — `_lc` now checks `not isatty stdout` before routing through better-ctx.
+- **Pipe guard for PowerShell** — `_lc` now checks `[Console]::IsOutputRedirected` before routing through better-ctx.
+
+#### Important
+After updating, run `better-ctx init` to regenerate the shell hooks with the pipe guard. Or open a new terminal tab.
+
+#### Testing
+- 5 new E2E tests for pipe-guard behavior and piped output preservation.
+- 3 new unit tests verifying pipe-guard presence in all shell hook variants (Bash, Fish, PowerShell).
+- All 677 tests passing, zero clippy warnings.
+
+## [2.21.5] — 2026-04-08
+
+### Windows Updater Infinite Loop Fix (#69)
+
+#### Fixed — Updater enters infinite loop with 100% CPU on Windows
+- **Replaced `timeout /t` with `ping` delay** — The deferred update `.bat` script used `timeout /t 1 /nobreak` for delays. On Windows systems with GNU coreutils in PATH (Git Bash, Cygwin, MSYS2), the GNU `timeout` binary takes precedence over the Windows built-in, fails instantly with "invalid time interval '/t'", and causes a tight retry loop at 100% CPU. Now uses `ping 127.0.0.1 -n 2 >nul` which works on every Windows system regardless of PATH.
+- **Added retry limit (60 attempts)** — The script now exits with an error message after 60 failed attempts (~60 seconds) instead of looping indefinitely. Cleans up the pending binary on timeout.
+- **Extracted `generate_update_script()` as public function** for testability.
+
+#### Testing
+- 10 new unit tests covering: no `timeout` command usage, `ping` delay, retry limit, counter increment, timeout exit, pending file cleanup, path substitution (incl. spaces), batch syntax validity, rollback on failure.
+- All 669 tests passing, zero clippy warnings.
+
+## [2.21.4] — 2026-04-08
+
+### Windows Shell Fix + Antigravity Support
+
+#### Fixed — Windows: `ctx_shell` fails with "& was unexpected at this time"
+- **PowerShell always preferred** — On Windows, `find_real_shell()` now always attempts to locate PowerShell (`pwsh.exe` or `powershell.exe`) before falling back to `cmd.exe`. Previously, PowerShell was only used if `PSModulePath` was set — but when IDEs (VS Code, Codex, Antigravity) spawn the MCP server, this env var is often absent. Since AI agents send bash-like syntax (`&&`, pipes, subshells), `cmd.exe` cannot parse these commands. This was the root cause of "& was unexpected at this time" errors reported by Windows users.
+- **`BETTER_CTX_SHELL` override** — Users can set `BETTER_CTX_SHELL=powershell.exe` (or any shell path) to force a specific shell, bypassing all detection logic.
+
+#### Added — `antigravity` agent support
+- **`better-ctx init --agent antigravity`** — Now recognized as alias for `gemini`, creating the same hook scripts and settings under `~/.gemini/`. Previously, Antigravity users had to know to use `--agent gemini` or run `better-ctx setup`.
+
+#### Testing
+- 19 new E2E tests covering shell detection, `BETTER_CTX_SHELL` override, shell command execution (pipes, `&&`, subshells, env vars), agent init (antigravity alias, unknown agent handling), Windows path handling in generated scripts, and bash script execution with Windows binary paths.
+- 10 new unit tests for Windows shell flag detection and shell detection logic.
+- All 659 tests passing, zero clippy warnings.
+
+## [2.21.3] — 2026-04-08
+
+### Robust Hook Escaping + Auto-Context Fix
+
+#### Fixed — Commands with Embedded Quotes Truncated
+- **JSON parser rewrite** — Hook scripts and Rust handler now correctly parse JSON values containing escaped quotes (e.g. `curl -H "Authorization: Bearer token"`). Previously, the naive `[^"]*` regex stopped at the first `\"` inside the value, truncating the command. Now uses `([^"\\]|\\.)*` pattern with proper unescape pass. Affects both bash scripts and Rust `extract_json_field`.
+- **Double-escaping for rewrites** — Rewrite output now applies two escaping passes: shell-escape (for the `-c "..."` wrapper) then JSON-escape (for the hook protocol). Previously, only one pass was applied, causing inner quotes to break both shell and JSON parsing.
+
+#### Fixed — Auto-Context Noise from Wrong Project (#62 Issue 4)
+- **Project root guard** — `session_lifecycle_pre_hook` and `enrich_after_read` now require a known, non-trivial `project_root` before triggering auto-context. Previously, when `project_root` was `None` or `"."`, the autonomy system would run `ctx_overview` on the MCP server's working directory (often a completely different project), injecting irrelevant "AUTO CONTEXT" blocks into responses.
+
+#### Improved — Cache Hit Message Clarity (#62 Issue 3)
+- **Actionable stub** — Cache hit responses now include guidance: `"File already in context from previous read. Use fresh=true to re-read if content needed again."` Previously, the terse `F1=main.rs cached 2t 4L` stub left AI agents confused about what to do next.
+
+#### Housekeeping
+- Redirect scripts reduced to minimal `exit 0` (removed ~30 lines of dead `is_binary`/`FILE_PATH` parsing code that was never reached).
+- 4 new unit tests for escaped-quote JSON parsing and double-escaping.
+- 1 new integration test for auto-context project_root guard.
+- All 611 tests passing, zero clippy warnings.
+
+## [2.21.2] — 2026-04-08
+
+### Critical Hook Fixes — Production Quality (Discussion #62)
+
+#### Fixed — Pipe Commands Broken in Shell Hook
+- **Pipe quoting fix** — Hook rewrite now properly quotes commands containing pipes. Previously `curl ... | python3 -m json.tool` was rewritten as `better-ctx -c curl ... | python3 ...` (pipe interpreted by shell). Now correctly produces `better-ctx -c "curl ... | python3 ..."`. This also fixes the `command not found: _lc` errors reported by users.
+
+#### Fixed — Read/Grep/ListFiles Blocked by Hook (#62)
+- **Removed tool blocking** — The redirect hook no longer denies native Read, Grep, or ListFiles tools. This was causing Claude Code's Edit tool to fail ("File has not been read yet") because Edit requires a prior native Read. Native tools now pass through freely. The MCP system instructions still guide the AI to prefer `ctx_read`/`ctx_search`/`ctx_tree`, but blocking is removed.
+
+#### Fixed — `find` Command Glob Pattern Support
+- **Glob patterns** — `better-ctx find "*.toml"` now correctly uses glob matching instead of literal substring search. Added `glob` crate dependency.
+
+#### Changed — README
+- **RTK** — Corrected "RTK" references to full name "Rust Token Killer" throughout README and FAQ section.
+
+#### Housekeeping
+- Removed ~180 lines of dead code from `hook_handlers.rs` (unused glob matching, binary detection, path exclusion functions that were orphaned by the redirect removal).
+- Added 3 new unit tests for hook rewrite quoting behavior.
+- All 504 tests passing, zero clippy warnings.
+
+## [2.21.1] — 2026-04-08
+
+### CLI File Caching
+
+#### Added — Persistent CLI Read Cache (#65)
+- **File-based CLI caching** — `better-ctx read <file>` now caches file content to `~/.better-ctx/cli-cache/cache.json`. Second and subsequent reads of unchanged files return a compact ~13-token cache-hit response instead of the full file content. This directly addresses Issue #65 (pi-better-ctx zero cache hits) by enabling caching for CLI-mode integrations that don't use the MCP server.
+- **Cache management** — New `better-ctx cache` subcommand with `stats`, `clear`, and `invalidate <path>` actions.
+- **`--fresh` / `--no-cache` flag** — Bypass the CLI cache for a single read when needed.
+- **5-minute TTL** — Cache entries expire after 300 seconds, matching the MCP server cache behavior.
+- **MD5 change detection** — Files are re-read when their content changes, even within the TTL window.
+- **Max 200 entries** — Oldest entries are evicted when the cache exceeds capacity.
+- 6 new unit tests including integration test for full cache lifecycle.
+
+#### Fixed — Missing Module Registrations
+- Registered `sandbox` and `loop_detection` modules that were present on disk but missing from `core/mod.rs`.
+
+## [2.21.0] — 2026-04-08
+
+### Binary File Passthrough, Disabled Tools, Community Contributions
+
+#### Fixed — Hook Blocks Image Viewing (#67)
+- **Binary file passthrough** — Hook redirect now detects binary files (images, PDFs, archives, fonts, videos, compiled files) by extension and passes them through to the native Read tool. Previously, the hook would deny all `read_file` calls when better-ctx was running, which blocked AI agents from viewing screenshots and images.
+- Updated both Rust `handle_redirect()` and all bash hook scripts (Claude, Cursor, Gemini CLI) with the same binary extension check.
+
+#### Added — Disabled Tools Config (#66, @DustinReynoldsPE)
+- **`disabled_tools`** config field — Exclude unused tools from the MCP tool list to reduce token overhead from tool definitions. Configure via `~/.better-ctx/config.toml` or `BETTER_CTX_DISABLED_TOOLS` env var (comma-separated).
+- Example: `disabled_tools = ["ctx_benchmark", "ctx_metrics", "ctx_analyze", "ctx_wrapped"]`
+- 10 new tests covering parsing, TOML deserialization, and filtering logic.
+
+#### Closed — Cache Hits Documentation (#65)
+- Clarified that file caching requires MCP server mode (`ctx_read`), not shell hook mode (`better-ctx -c`). Shell hooks compress command output only; the MCP server provides file caching with ~13 token re-reads.
+
+## [2.20.0] — 2026-04-07
+
+### Sandbox Execution, Progressive Throttling, Compaction Recovery
+
+#### Added — Sandbox Code Execution
+- **`ctx_execute`** — New MCP tool that runs code in 11 languages (JavaScript, TypeScript, Python, Shell, Ruby, Go, Rust, PHP, Perl, R, Elixir) in an isolated subprocess. Only stdout enters the context window — raw data never leaves the sandbox. Supports `action=batch` for multiple scripts in one call, and `action=file` to process files in sandbox with auto-detected language.
+- **Smart truncation** — Large outputs (>32 KB) are truncated with head (60%) + tail (40%) preservation, keeping both setup context and error messages visible.
+- **`BETTER_CTX_SANDBOX=1` env** — Set in all sandbox processes for detection by user code.
+- **Timeout support** — Default 30s, configurable per-call.
+
+#### Added — Progressive Throttling (Loop Detection)
+- **Automatic agent loop detection** — Tracks tool call fingerprints within a 5-minute sliding window. Calls 1-3: normal. Calls 4-8: reduced results + warning. Calls 9-12: stronger warning. Calls 13+: blocked with suggestion to use `ctx_batch_execute` or vary approach.
+- **Deterministic fingerprinting** — JSON args are canonicalized (key-sorted) before hashing, so `{path: "a", mode: "b"}` and `{mode: "b", path: "a"}` are treated as the same call.
+- **Per-tool tracking** — Different tools with different args are tracked independently.
+
+#### Added — Compaction Recovery
+- **`ctx_session(action=snapshot)`** — Builds a priority-tiered XML snapshot (~2 KB max) of the current session state including task, modified files, decisions, findings, progress, test results, and stats. Saved to `~/.better-ctx/sessions/{id}_snapshot.txt`.
+- **`ctx_session(action=restore)`** — Rebuilds session state from the most recent compaction snapshot. When the context window fills up and the agent compacts, the snapshot allows seamless continuation.
+- **Priority tiers** — Task and files (P1) are always included. Decisions and findings (P2) next. Tests, next steps, and stats (P3/P4) are dropped first if the 2 KB budget is tight.
+
+## [2.19.2] — 2026-04-07
+
+### Fixed
+- **Gemini CLI hook schema** — Fixed "Discarding invalid hook definition for BeforeTool" error. Hook definitions now include the required `"type": "command"` field and nested `"hooks"` array structure expected by the Gemini CLI validator. Existing configs without `"type"` are automatically migrated. (#63)
+- **Remote dashboard auth** — Fixed dashboard returning `{"error":"unauthorized"}` when accessed remotely via browser. Auth is now only enforced on `/api/*` endpoints. HTML pages load freely, with the bearer token automatically injected into API calls. Browser URL with `?token=` query parameter is printed on startup for easy remote access. (#64)
+
+## [2.19.1] — 2026-04-07
+
+### Fixed
+- **Cursor hooks.json format** — Fixed invalid hooks.json that caused "Config version must be a number; Config hooks must be an object" error in Cursor. Now generates correct format with `"version": 1` and hooks as an object with `preToolUse` key instead of array. Existing broken configs are automatically migrated on next `better-ctx install cursor` or MCP server start.
+- **cargo publish workflow** — Added `--allow-dirty` to release pipeline to prevent publish failures from checkout artifacts
+
+## [2.19.0] — 2026-04-07
+
+### Temporal Knowledge, Contradiction Detection, Agent Diaries & Cross-Session Search
+
+#### Added — Knowledge Intelligence
+- **Temporal facts** — All facts now track `valid_from`/`valid_until` timestamps. When a high-confidence fact changes, the old value is archived (not deleted) with full history
+- **Contradiction detection** — `ctx_knowledge(action=remember)` automatically detects when a new fact conflicts with an existing high-confidence fact, reporting severity (low/medium/high) and resolution
+- **Confirmation tracking** — Facts that are re-asserted gain increasing `confirmation_count`, boosting their reliability score
+- **Knowledge rooms** — `ctx_knowledge(action=rooms)` lists all knowledge categories (rooms) with fact counts, providing a MemPalace-like structured overview
+- **Timeline view** — `ctx_knowledge(action=timeline, category="...")` shows the full version history of facts in a category, including archived values with validity ranges
+- **Cross-session search** — `ctx_knowledge(action=search, query="...")` searches across ALL projects and ALL past sessions for matching facts, findings, and decisions
+- **Wake-up briefing** — `ctx_knowledge(action=wakeup)` returns a compact AAAK-formatted briefing of the most important project facts
+- **AAAK format** — Compact knowledge representation (`CATEGORY:key=value★★★|key2=value2★★`) used in LLM instructions instead of verbose prose, saving ~60% tokens
+
+#### Added — Agent Diaries
+- **Persistent agent diaries** — `ctx_agent(action=diary, category=discovery|decision|blocker|progress|insight)` logs structured entries that persist across sessions at `~/.better-ctx/agents/diaries/`
+- **Diary recall** — `ctx_agent(action=recall_diary)` shows the 10 most recent diary entries for an agent with timestamps and context
+- **Diary listing** — `ctx_agent(action=diaries)` lists all agent diaries across the system with entry counts and last-updated times
+
+#### Added — Wake-Up Context
+- **ctx_overview wake-up briefing** — `ctx_overview` now automatically includes a compact briefing at session start: top project facts (AAAK), last task, recent decisions, and active agents — zero configuration needed
+
+#### Changed
+- **Knowledge block in LLM instructions** now uses AAAK compact format instead of verbose prose, reducing knowledge injection tokens by ~60%
+- **MCP tool descriptions** updated for `ctx_knowledge` (12 actions) and `ctx_agent` (11 actions) to document all new capabilities
+
+## [2.18.1] — 2026-04-07
+
+### Code Quality & Security Hardening
+
+#### Fixed
+- **Shell injection in CLI** — `better-ctx grep` and `better-ctx find` no longer shell-interpolate user input; replaced with pure Rust implementation using `ignore::WalkBuilder` + `regex`
+- **Panic in `report_gotcha`** — `unwrap()` after `add_or_merge` could panic when gotcha store exceeds capacity (100 entries) and the new entry gets evicted; now returns `Option<&Gotcha>` safely
+- **Broken `FilterEngine` cache** — Removed dead `get_or_load()` method that stored empty rules in a `Mutex` and was never called; `CACHED_ENGINE` static removed
+- **`unwrap()` after `is_some()` pattern** — Replaced fragile double-lookup + `unwrap()` with idiomatic `if let Some()` / `match` in `ctx_read`, `ctx_smart_read`, and `ctx_delta`
+- **`graph` CLI argument parsing** — `better-ctx graph build /path` now correctly separates action from path argument
+
+#### Added
+- **`better-ctx graph` CLI command** — Build the project dependency graph from the command line (`better-ctx graph [build] [path]`); previously only available via MCP `ctx_graph` tool
+- **Consolidated `detect_project_root`** — Single implementation in `core::protocol` replacing 3 duplicate copies across `server.rs`, `ctx_read.rs`, and `dashboard/mod.rs`
+
+#### Changed
+- **Tokio features trimmed** — `features = ["full"]` replaced with 8 specific features (`rt`, `rt-multi-thread`, `macros`, `io-std`, `io-util`, `net`, `sync`, `time`), reducing compile time and binary size
+- **Security workflow updated** — `security-check.yml` now correctly documents `ureq` as the allowed HTTP client (for opt-in cloud sync, updates, error reports) instead of claiming "no network"
+
+## [2.18.0] — 2026-04-07
+
+### Multi-Agent Context Sharing, Semantic Caching, Dashboard & Editor Integrations
+
+#### Added — Multi-Agent
+- **`ctx_share` tool** (28th MCP tool) — Share cached file contexts between agents. Actions: `push`, `pull`, `list`, `clear`
+- **`ctx_agent` handoff action** — Transfer a task to another agent with a summary message, automatically marks the handing-off agent as finished
+- **`ctx_agent` sync action** — Combined overview of active agents, pending messages, and shared contexts
+- **`lctx --agents` flag** — Launch multiple agents in parallel: `lctx --agents claude,gemini` starts both in the background with shared context
+- **Dashboard `/api/agents` enhancement** — Returns structured JSON with active agents, pending messages, and shared context count
+
+#### Added — Intent & Semantic Intelligence
+- **Multi-intent detection** — `ctx_intent` now detects compound queries ("fix X and then test Y") and splits them into sub-intents with individual classifications
+- **Complexity classification** — `ctx_intent` returns task complexity (mechanical/standard/architectural) based on query analysis, target count, and cross-cutting keywords
+- **Heat-ranked file strategy** — `ctx_intent` file discovery ranks results by heat score (token density + graph connectivity)
+- **Semantic cache** — TF-IDF + cosine similarity index for finding semantically similar files across reads. Persistent at `~/.better-ctx/semantic_cache/`. Cache warming suggestions based on access patterns. Hints shown on `ctx_read` cache misses
+
+#### Added — Dashboard & CLI
+- **`better-ctx heatmap`** — New CLI command for context heat map visualization with color-coded token counts and graph connections
+- **Dashboard authentication** — Bearer token auth for `/api/*` endpoints, token generated on first launch at `~/.better-ctx/dashboard_token`
+- **Heatmap API** — `GET /api/heatmap` returns project-wide file heat scores as JSON
+
+#### Added — Editor Integrations
+- **VS Code Extension** (`packages/vscode-better-ctx`) — Status bar token savings, one-click setup, MCP auto-config for GitHub Copilot, command palette (setup, doctor, gain, dashboard, heatmap)
+- **Chrome Extension** (`packages/chrome-better-ctx`) — Manifest V3, auto-compress pastes in ChatGPT, Claude, Gemini. Native messaging bridge for full compression, fallback for comment/whitespace removal
+
+#### Changed
+- MCP tool count: 25 → 28 across all documentation, READMEs, SKILL.md, and 11 website locales
+
+
+## [2.17.6] — 2026-04-07
+
+### Feature: Crush Support (#61)
+
+#### Added
+- **Crush integration** — `better-ctx init --agent crush` configures MCP in `~/.config/crush/crush.json` with the Crush-specific `"mcp"` key format (instead of `"mcpServers"`)
+- **Auto-detection** — `better-ctx setup` and `better-ctx doctor` now detect Crush installations
+- **Rules injection** — `better-ctx rules` creates `~/.config/crush/rules/better-ctx.md` when Crush is installed
+- **Prompt generator** — Website getting-started page includes Crush with manual config instructions
+- **Compatibility page** — Crush listed in all compatibility matrices across 11 languages
+
+## [2.17.5] — 2026-04-06
+
+### Fix: ctx_shell Input Validation (#50)
+
+#### Added
+- **File-write command blocking** — `ctx_shell` now detects and rejects shell redirects (`>`, `>>`), heredocs (`<< EOF`), and `tee` commands. Returns a clear error redirecting to the native Write tool
+- **Command size limit** — Rejects commands over 8KB, preventing oversized heredocs from corrupting the MCP protocol stream
+- **Quote-aware redirect parsing** — Redirect detection respects single/double quotes, ignores `2>` (stderr) and `> /dev/null`
+
+This prevents the cascading failure reported in #50:
+Oversized `ctx_shell` → API Error 400 → MCP stream corruption → "path is required" → MCP stops
+
+## [2.17.4] — 2026-04-06
+
+### Feature: Hook Redirect Path Exclusion + Automated Publishing
+
+#### Added
+- **Path exclusion for hook redirect** (#60) — Exclude specific paths from PreToolUse redirect hook. Paths matching patterns bypass the redirect and allow native Read/Grep/ListFiles to proceed
+  - Config: `redirect_exclude = [".wolf/**", ".claude/**", "*.json"]` in `~/.better-ctx/config.toml`
+  - Env var: `BETTER_CTX_HOOK_EXCLUDE=".wolf/**,.claude/**"` (takes precedence)
+  - Glob patterns support `*`, `?`, and `**` (recursive directory match)
+- **Automated crates.io publishing** — `cargo publish` runs automatically after GitHub Release
+- **Automated npm publishing** — `better-ctx-bin` and `pi-better-ctx` published automatically
+
+## [2.17.3] — 2026-04-06
+
+### Fix: MCP Stdout Pollution on Windows
+
+#### Fixed
+- **Windows MCP "not valid JSON" error** — `println!("Installed...")` messages in `install_claude/cursor/gemini_hook_config` polluted stdout during MCP server initialization, breaking JSON-RPC protocol. Now suppressed via `mcp_server_quiet_mode()` guard. (Fixes Lorenzo Rossi's report on Discord)
+
+#### Changed
+- **LanguageSwitcher position** — Moved to the right of the "Get Started" button in the header
+- **Token Guardian Buddy** — Now shown inline in `better-ctx gain` output when enabled
+- **Bug Memory stats** — Active gotchas and prevention stats shown in `better-ctx gain`
+- **Helpful footer** — `better-ctx gain` now shows links to `report-issue`, `contribute`, and `gotchas`
+
+## [2.17.2] — 2026-04-06
+
+### Fix: Cross-Platform Hook Handlers
+
+#### Fixed
+- **Windows: PreToolUse hook errors** — Agent hooks (Claude Code, Cursor, Gemini) no longer require Bash. Hook logic is now implemented natively in the better-ctx binary via `better-ctx hook rewrite` and `better-ctx hook redirect` (#49)
+- **"Stuck in file reading"** — Fixed hook redirect loop where denied Read/Grep tools caused repeated retries when the MCP server wasn't properly connected
+- **Hook auto-migration** — Existing `.sh`-based hook configs are automatically upgraded to native binary commands on next MCP server start
+
+#### Changed
+- Hook configs now point to `better-ctx hook rewrite` / `better-ctx hook redirect` instead of `.sh` scripts
+- `refresh_installed_hooks()` also updates hook configs (not just scripts) to ensure migration
+
+## [2.17.1] — 2026-04-05
+
+### Token Guardian Buddy — Data-Driven ASCII Companion
+
+#### Added
+- **Token Guardian Buddy** — Tamagotchi-style companion that evolves based on real usage metrics (tokens saved, commands, bugs prevented)
+- **Procedural ASCII avatar generation** — Over 69 million unique creature combinations from 8 modular body parts (head, eyes, mouth, ears, body, legs, tail, markings)
+- **Deterministic identity** — Each user gets a unique, persistent buddy based on their system seed
+- **XP & leveling system** — XP calculated from tokens saved, commands issued, and bugs prevented; level derived via `sqrt(xp / 50)`
+- **Rarity tiers** — Egg → Common → Uncommon → Rare → Epic → Legendary, based on lifetime tokens saved
+- **Mood system** — Dynamic mood (Happy, Focused, Tired, Excited, Zen) derived from compression rate, errors, bugs prevented, and streak
+- **RPG stats** — Compression, Vigilance, Endurance, Wisdom, Experience (0-100 scale)
+- **Name generator** — Deterministic adjective + noun combinations (~900 combos, e.g. "Cosmic Orbit")
+- **CLI commands** — `better-ctx buddy` with `show`, `stats`, `ascii`, `json` actions; `pet` alias
+- **Dashboard Buddy card** — Glasmorphism UI with rarity-dependent gradients/animations, animated XP bar, SVG radial gauges, styled speech bubble, mood indicator
+- **API endpoint** — `/api/buddy` serving full `BuddyState` JSON including `ascii_art` and `xp_next_level`
+
 ## [2.17.0] — 2026-04-04
 
 ### Premium Experience Upgrade — Architecture, Performance & Polish

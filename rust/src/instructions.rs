@@ -17,26 +17,46 @@ pub fn build_instructions_with_client(crp_mode: CrpMode, client_name: &str) -> S
         None => String::new(),
     };
 
-    let knowledge_block = {
-        let project_root = crate::core::session::SessionState::load_latest()
-            .and_then(|s| s.project_root)
-            .or_else(|| {
-                std::env::current_dir()
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            });
-        match project_root {
-            Some(root) => {
-                let knowledge = crate::core::knowledge::ProjectKnowledge::load(&root);
-                match knowledge {
-                    Some(k) if !k.facts.is_empty() || !k.patterns.is_empty() => {
-                        format!("\n--- PROJECT KNOWLEDGE ---\n{}\n---\n", k.format_summary())
+    let project_root_for_blocks = crate::core::session::SessionState::load_latest()
+        .and_then(|s| s.project_root)
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        });
+
+    let knowledge_block = match &project_root_for_blocks {
+        Some(root) => {
+            let knowledge = crate::core::knowledge::ProjectKnowledge::load(root);
+            match knowledge {
+                Some(k) if !k.facts.is_empty() || !k.patterns.is_empty() => {
+                    let aaak = k.format_aaak();
+                    if aaak.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n--- PROJECT MEMORY (AAAK) ---\n{}\n---\n", aaak.trim())
                     }
-                    _ => String::new(),
                 }
+                _ => String::new(),
             }
-            None => String::new(),
         }
+        None => String::new(),
+    };
+
+    let gotcha_block = match &project_root_for_blocks {
+        Some(root) => {
+            let store = crate::core::gotcha_tracker::GotchaStore::load(root);
+            let files: Vec<String> = crate::core::session::SessionState::load_latest()
+                .map(|s| s.files_touched.iter().map(|ft| ft.path.clone()).collect())
+                .unwrap_or_default();
+            let block = store.format_injection_block(&files);
+            if block.is_empty() {
+                String::new()
+            } else {
+                format!("\n{block}\n")
+            }
+        }
+        None => String::new(),
     };
 
     let mut base = format!("\
@@ -59,7 +79,11 @@ reference, aggressive, entropy, lines:N-M. Auto-selects when unspecified. Re-rea
 If ctx_read returns 'cached': use fresh=true, start_line=N, or mode='lines:N-M' to re-read.\n\
 \n\
 AUTONOMY: better-ctx auto-runs ctx_overview, ctx_preload, ctx_dedup, ctx_compress behind the scenes.\n\
+Multi-agent: ctx_share auto-pushes context at checkpoints. Use ctx_agent(action=handoff) to transfer tasks, ctx_agent(action=sync) for status.\n\
+Semantic: ctx_semantic_search finds similar code by meaning — use when exact search (ctx_search) misses.\n\
 Focus on: ctx_read, ctx_shell, ctx_search, ctx_tree. Use ctx_session for memory, ctx_knowledge for project facts.\n\
+Knowledge: ctx_knowledge actions: remember, recall, timeline, rooms, search (cross-session), wakeup. Facts have temporal validity + contradiction detection.\n\
+Agent diary: ctx_agent(action=diary, category=discovery|decision|blocker|progress|insight) to log agent work. ctx_agent(action=recall_diary) to review.\n\
 ctx_shell raw=true: skip compression for small/critical outputs. Full output tee files at ~/.better-ctx/tee/.\n\
 \n\
 Auto-checkpoint every 15 calls. Cache clears after 5 min idle.\n\
@@ -70,6 +94,7 @@ CEP v1: 1.ACT FIRST 2.DELTA ONLY (Fn refs) 3.STRUCTURED (+/-/~) 4.ONE LINE PER A
 \n\
 {session_block}\
 {knowledge_block}\
+{gotcha_block}\
 \n\
 --- TOOL PREFERENCE (LITM-END) ---\n\
 Prefer: ctx_read over Read | ctx_shell over Shell | ctx_search over Grep | ctx_tree over ls\n\

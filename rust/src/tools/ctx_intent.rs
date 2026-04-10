@@ -23,8 +23,10 @@ pub fn handle(
     project_root: &str,
     crp_mode: CrpMode,
 ) -> String {
-    let classification = intent_engine::classify(query);
-    let briefing_header = intent_engine::format_briefing_header(&classification);
+    let multi_intents = intent_engine::detect_multi_intent(query);
+    let primary = &multi_intents[0];
+    let briefing_header = intent_engine::format_briefing_header(primary);
+    let complexity = intent_engine::classify_complexity(query, primary);
 
     let intent = classify_intent(query);
     let strategy = build_strategy(&intent, project_root);
@@ -45,6 +47,15 @@ pub fn handle(
     result.push(briefing_block);
     result.push(briefing_header);
     result.push(format!(
+        "Complexity: {} | {}",
+        complexity.instruction_suffix().lines().next().unwrap_or(""),
+        if multi_intents.len() > 1 {
+            format!("{} sub-intents detected", multi_intents.len())
+        } else {
+            "single intent".to_string()
+        }
+    ));
+    result.push(format!(
         "Strategy: {} files, modes: {}",
         strategy.len(),
         strategy
@@ -53,6 +64,19 @@ pub fn handle(
             .collect::<Vec<_>>()
             .join(", ")
     ));
+
+    if multi_intents.len() > 1 {
+        result.push("Sub-intents:".to_string());
+        for (i, sub) in multi_intents.iter().enumerate() {
+            result.push(format!(
+                "  {}. {} ({:.0}%)",
+                i + 1,
+                sub.task_type.as_str(),
+                sub.confidence * 100.0
+            ));
+        }
+    }
+
     result.push(String::new());
 
     for (path, mode) in &strategy {
@@ -66,7 +90,10 @@ pub fn handle(
 
     let output = result.join("\n");
     let tokens = count_tokens(&output);
-    format!("{output}\n\n[ctx_intent: {tokens} tok]")
+    format!(
+        "{output}\n\n[ctx_intent: {tokens} tok | complexity: {}]",
+        complexity.instruction_suffix().lines().next().unwrap_or("")
+    )
 }
 
 fn classify_intent(query: &str) -> Intent {
@@ -191,6 +218,59 @@ fn extract_area(query: &str) -> String {
     keywords.last().unwrap_or(&"").to_string()
 }
 
+pub fn rank_by_heat(files: &mut [(String, String)], root: &str) {
+    let index = crate::core::graph_index::load_or_build(root);
+    if index.files.is_empty() {
+        return;
+    }
+
+    let mut connection_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for edge in &index.edges {
+        *connection_counts.entry(edge.from.clone()).or_default() += 1;
+        *connection_counts.entry(edge.to.clone()).or_default() += 1;
+    }
+
+    let max_tokens = index
+        .files
+        .values()
+        .map(|f| f.token_count)
+        .max()
+        .unwrap_or(1) as f64;
+    let max_conn = connection_counts.values().max().copied().unwrap_or(1) as f64;
+
+    files.sort_by(|a, b| {
+        let heat_a = heat_score_for(&a.0, root, &index, &connection_counts, max_tokens, max_conn);
+        let heat_b = heat_score_for(&b.0, root, &index, &connection_counts, max_tokens, max_conn);
+        heat_b
+            .partial_cmp(&heat_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
+fn heat_score_for(
+    path: &str,
+    root: &str,
+    index: &crate::core::graph_index::ProjectIndex,
+    connections: &std::collections::HashMap<String, usize>,
+    max_tokens: f64,
+    max_conn: f64,
+) -> f64 {
+    let rel = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .trim_start_matches('/');
+
+    if let Some(entry) = index.files.get(rel) {
+        let conn = connections.get(rel).copied().unwrap_or(0);
+        let token_norm = entry.token_count as f64 / max_tokens;
+        let conn_norm = conn as f64 / max_conn;
+        token_norm * 0.4 + conn_norm * 0.6
+    } else {
+        0.0
+    }
+}
+
 fn build_strategy(intent: &Intent, root: &str) -> Vec<(String, String)> {
     let mut files = Vec::new();
     let loaded = crate::core::graph_index::load_or_build(root);
@@ -303,6 +383,7 @@ fn build_strategy(intent: &Intent, root: &str) -> Vec<(String, String)> {
         Intent::Unknown => {}
     }
 
+    rank_by_heat(&mut files, root);
     files
 }
 

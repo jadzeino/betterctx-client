@@ -87,9 +87,12 @@ pub fn run(args: &[String]) {
     println!();
     crate::terminal_ui::print_logo_animated();
     println!();
-    println!("  \x1b[33m\x1b[1m⟳ Restart your IDE / AI tool to activate the new version.\x1b[0m");
+    println!("  \x1b[33m\x1b[1m⟳ Restart your IDE and shell to activate the new version.\x1b[0m");
     println!("    \x1b[2mClose and re-open Cursor, VS Code, Claude Code, etc. completely.\x1b[0m");
     println!("    \x1b[2mThe MCP server must reconnect to use the updated binary.\x1b[0m");
+    println!(
+        "    \x1b[2mRun 'source ~/.zshrc' (or restart terminal) for updated shell aliases.\x1b[0m"
+    );
     println!();
 }
 
@@ -115,6 +118,69 @@ fn post_update_refresh() {
 
         crate::hooks::refresh_installed_hooks();
         println!("    \x1b[32m✓\x1b[0m Hook scripts refreshed");
+
+        refresh_shell_aliases(&home);
+    }
+}
+
+fn refresh_shell_aliases(home: &std::path::Path) {
+    let binary = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "better-ctx".to_string());
+    let bash_binary = crate::hooks::to_bash_compatible_path(&binary);
+
+    let shell_configs: &[(&str, &str)] = &[
+        (".zshrc", "zsh"),
+        (".bashrc", "bash"),
+        (".config/fish/config.fish", "fish"),
+    ];
+
+    let mut updated = false;
+
+    for (rc_file, shell_name) in shell_configs {
+        let rc_path = home.join(rc_file);
+        if !rc_path.exists() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&rc_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !content.contains("better-ctx shell hook") {
+            continue;
+        }
+
+        match *shell_name {
+            "zsh" => crate::cli::init_posix(true, &bash_binary),
+            "bash" => crate::cli::init_posix(false, &bash_binary),
+            "fish" => crate::cli::init_fish(&bash_binary),
+            _ => continue,
+        }
+        println!("    \x1b[32m✓\x1b[0m Shell aliases updated (~/{rc_file})");
+        updated = true;
+    }
+
+    #[cfg(windows)]
+    {
+        let ps_profile = home
+            .join("Documents")
+            .join("PowerShell")
+            .join("Microsoft.PowerShell_profile.ps1");
+        if ps_profile.exists() {
+            if let Ok(content) = std::fs::read_to_string(&ps_profile) {
+                if content.contains("better-ctx shell hook") {
+                    crate::cli::init_powershell(&binary);
+                    println!("    \x1b[32m✓\x1b[0m PowerShell aliases updated");
+                    updated = true;
+                }
+            }
+        }
+    }
+
+    if !updated {
+        println!(
+            "    \x1b[2m—\x1b[0m No shell aliases to refresh (run 'better-ctx setup' to install)"
+        );
     }
 }
 

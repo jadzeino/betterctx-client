@@ -87,7 +87,29 @@ pub fn handle(
             format!("Cleaned up {removed} old session(s) (>7 days).")
         }
 
-        _ => format!("Unknown action: {action}. Use: status, load, save, task, finding, decision, reset, list, cleanup"),
+        "snapshot" => match session.save_compaction_snapshot() {
+            Ok(snapshot) => {
+                format!(
+                    "Compaction snapshot saved ({} bytes).\n{snapshot}",
+                    snapshot.len()
+                )
+            }
+            Err(e) => format!("Snapshot failed: {e}"),
+        },
+
+        "restore" => {
+            let snapshot = if let Some(id) = session_id {
+                SessionState::load_compaction_snapshot(id)
+            } else {
+                SessionState::load_latest_snapshot()
+            };
+            match snapshot {
+                Some(s) => format!("Session restored from compaction snapshot:\n{s}"),
+                None => "No compaction snapshot found. Session continues fresh.".to_string(),
+            }
+        }
+
+        _ => format!("Unknown action: {action}. Use: status, load, save, task, finding, decision, reset, list, cleanup, snapshot, restore"),
     }
 }
 

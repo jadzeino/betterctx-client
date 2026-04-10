@@ -1,8 +1,8 @@
 [package]
 name = "better-ctx"
-version = "2.17.0"
+version = "3.0.0"
 edition = "2021"
-description = "Context Intelligence Engine with CCP. 25 MCP tools, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge, multi-agent sharing, LITM-aware positioning. Supports 23 AI tools. Reduces LLM token consumption by up to 99%."
+description = "Context Intelligence Engine with CCP. 34 MCP tools, 8 read modes, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge with temporal facts + contradiction detection, multi-agent context sharing + diaries, LITM-aware positioning, AAAK compact format, adaptive compression with Thompson Sampling bandits. Supports 24 AI tools. Reduces LLM token consumption by up to 99%."
 license = "MIT"
 repository = "https://github.com/jadzeino/betterctx-client"
 homepage = "https://betterctx.com"
@@ -20,8 +20,9 @@ name = "better-ctx"
 path = "src/main.rs"
 
 [features]
-default = ["tree-sitter"]
+default = ["tree-sitter", "embeddings"]
 neural = ["dep:rten", "dep:rten-tensor"]
+embeddings = ["dep:rten", "dep:rten-tensor"]
 tree-sitter = [
   "dep:tree-sitter",
   "dep:tree-sitter-rust",
@@ -47,7 +48,7 @@ tree-sitter = [
 [dependencies]
 rmcp = { version = "1", features = ["server", "transport-io"] }
 tiktoken-rs = "0.6"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "io-std", "io-util", "net", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"
@@ -90,6 +91,7 @@ tree-sitter-zig = { version = "1.1", optional = true }
 tree-sitter-dart = { version = "0.1", optional = true }
 rten = { version = "0.24", optional = true }
 rten-tensor = { version = "0.24", optional = true }
+glob = "0.3.3"
 
 [profile.release]
 opt-level = "z"

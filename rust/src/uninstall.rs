@@ -99,6 +99,7 @@ fn remove_mcp_configs(home: &Path) -> bool {
         ("OpenCode", home.join(".opencode/mcp.json")),
         ("Aider", home.join(".aider/mcp.json")),
         ("Amp", home.join(".amp/mcp.json")),
+        ("Crush", home.join(".config/crush/crush.json")),
     ];
 
     let mut removed = false;
@@ -195,6 +196,7 @@ fn remove_rules_files(home: &Path) -> bool {
         ("Pi Coding Agent", home.join(".pi/rules/better-ctx.md")),
         ("AWS Kiro", home.join(".kiro/rules/better-ctx.md")),
         ("Verdent", home.join(".verdent/rules/better-ctx.md")),
+        ("Crush", home.join(".config/crush/rules/better-ctx.md")),
     ];
 
     let mut removed = false;

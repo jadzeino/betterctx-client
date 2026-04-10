@@ -170,12 +170,65 @@ pub fn handle(
         }
     }
 
+    let wakeup = build_wakeup_briefing(&project_root);
+    if !wakeup.is_empty() {
+        output.push(String::new());
+        output.push(wakeup);
+    }
+
     let original = count_tokens(&format!("{} files", index.files.len())) * index.files.len();
     let compressed = count_tokens(&output.join("\n"));
     output.push(String::new());
     output.push(crate::core::protocol::format_savings(original, compressed));
 
     output.join("\n")
+}
+
+fn build_wakeup_briefing(project_root: &str) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(knowledge) = crate::core::knowledge::ProjectKnowledge::load(project_root) {
+        let facts_line = knowledge.format_wakeup();
+        if !facts_line.is_empty() {
+            parts.push(facts_line);
+        }
+    }
+
+    if let Some(session) = crate::core::session::SessionState::load_latest() {
+        if let Some(ref task) = session.task {
+            parts.push(format!("LAST_TASK:{}", task.description));
+        }
+        if !session.decisions.is_empty() {
+            let recent: Vec<String> = session
+                .decisions
+                .iter()
+                .rev()
+                .take(3)
+                .map(|d| d.summary.clone())
+                .collect();
+            parts.push(format!("RECENT_DECISIONS:{}", recent.join("|")));
+        }
+    }
+
+    let registry = crate::core::agents::AgentRegistry::load_or_create();
+    let active_agents: Vec<&crate::core::agents::AgentEntry> = registry
+        .agents
+        .iter()
+        .filter(|a| a.status != crate::core::agents::AgentStatus::Finished)
+        .collect();
+    if !active_agents.is_empty() {
+        let agents: Vec<String> = active_agents
+            .iter()
+            .map(|a| format!("{}({})", a.agent_id, a.role.as_deref().unwrap_or("-")))
+            .collect();
+        parts.push(format!("AGENTS:{}", agents.join(",")));
+    }
+
+    if parts.is_empty() {
+        return String::new();
+    }
+
+    format!("WAKE-UP BRIEFING:\n{}", parts.join("\n"))
 }
 
 fn short_path(path: &str) -> String {

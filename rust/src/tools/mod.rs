@@ -16,6 +16,7 @@ pub mod ctx_dedup;
 pub mod ctx_delta;
 pub mod ctx_discover;
 pub mod ctx_edit;
+pub mod ctx_execute;
 pub mod ctx_fill;
 pub mod ctx_graph;
 pub mod ctx_intent;
@@ -29,6 +30,7 @@ pub mod ctx_response;
 pub mod ctx_search;
 pub mod ctx_semantic_search;
 pub mod ctx_session;
+pub mod ctx_share;
 pub mod ctx_shell;
 pub mod ctx_smart_read;
 pub mod ctx_tree;
@@ -91,6 +93,7 @@ pub struct LeanCtxServer {
     pub agent_id: Arc<RwLock<Option<String>>>,
     pub client_name: Arc<RwLock<String>>,
     pub autonomy: Arc<autonomy::AutonomyState>,
+    pub loop_detector: Arc<RwLock<crate::core::loop_detection::LoopDetector>>,
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +142,36 @@ impl LeanCtxServer {
             agent_id: Arc::new(RwLock::new(None)),
             client_name: Arc::new(RwLock::new(String::new())),
             autonomy: Arc::new(autonomy::AutonomyState::new()),
+            loop_detector: Arc::new(RwLock::new(crate::core::loop_detection::LoopDetector::new())),
         }
+    }
+
+    /// Resolves a (possibly relative) tool path against the session's project_root.
+    /// Absolute paths and "." are returned as-is. Relative paths like "src/main.rs"
+    /// are joined with project_root so tools work regardless of the server's cwd.
+    pub async fn resolve_path(&self, path: &str) -> String {
+        let normalized = crate::hooks::normalize_tool_path(path);
+        if normalized.is_empty() || normalized == "." {
+            return normalized;
+        }
+        let p = std::path::Path::new(&normalized);
+        if p.is_absolute() || p.exists() {
+            return normalized;
+        }
+        let session = self.session.read().await;
+        if let Some(ref root) = session.project_root {
+            let resolved = std::path::Path::new(root).join(&normalized);
+            if resolved.exists() {
+                return resolved.to_string_lossy().to_string();
+            }
+        }
+        if let Some(ref cwd) = session.shell_cwd {
+            let resolved = std::path::Path::new(cwd).join(&normalized);
+            if resolved.exists() {
+                return resolved.to_string_lossy().to_string();
+            }
+        }
+        normalized
     }
 
     pub async fn check_idle_expiry(&self) {
@@ -253,12 +285,15 @@ impl LeanCtxServer {
         drop(session);
 
         if has_insights {
-            if let Some(root) = project_root {
+            if let Some(ref root) = project_root {
+                let root = root.clone();
                 std::thread::spawn(move || {
                     auto_consolidate_knowledge(&root);
                 });
             }
         }
+
+        let multi_agent_block = self.auto_multi_agent_checkpoint(&project_root).await;
 
         self.record_call("ctx_compress", 0, 0, Some("auto".to_string()))
             .await;
@@ -266,9 +301,79 @@ impl LeanCtxServer {
         self.record_cep_snapshot().await;
 
         Some(format!(
-            "{checkpoint}\n\n--- SESSION STATE ---\n{session_summary}\n\n{}",
+            "{checkpoint}\n\n--- SESSION STATE ---\n{session_summary}\n\n{}{multi_agent_block}",
             complexity.instruction_suffix()
         ))
+    }
+
+    async fn auto_multi_agent_checkpoint(&self, project_root: &Option<String>) -> String {
+        let root = match project_root {
+            Some(r) => r,
+            None => return String::new(),
+        };
+
+        let registry = crate::core::agents::AgentRegistry::load_or_create();
+        let active = registry.list_active(Some(root));
+        if active.len() <= 1 {
+            return String::new();
+        }
+
+        let agent_id = self.agent_id.read().await;
+        let my_id = match agent_id.as_deref() {
+            Some(id) => id.to_string(),
+            None => return String::new(),
+        };
+        drop(agent_id);
+
+        let cache = self.cache.read().await;
+        let entries = cache.get_all_entries();
+        if !entries.is_empty() {
+            let mut by_access: Vec<_> = entries.iter().collect();
+            by_access.sort_by(|a, b| b.1.read_count.cmp(&a.1.read_count));
+            let top_paths: Vec<&str> = by_access
+                .iter()
+                .take(5)
+                .map(|(key, _)| key.as_str())
+                .collect();
+            let paths_csv = top_paths.join(",");
+
+            let _ = ctx_share::handle("push", Some(&my_id), None, Some(&paths_csv), None, &cache);
+        }
+        drop(cache);
+
+        let pending_count = registry
+            .scratchpad
+            .iter()
+            .filter(|e| !e.read_by.contains(&my_id) && e.from_agent != my_id)
+            .count();
+
+        let shared_dir = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".better-ctx")
+            .join("agents")
+            .join("shared");
+        let shared_count = if shared_dir.exists() {
+            std::fs::read_dir(&shared_dir)
+                .map(|rd| rd.count())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let agent_names: Vec<String> = active
+            .iter()
+            .map(|a| {
+                let role = a.role.as_deref().unwrap_or(&a.agent_type);
+                format!("{role}({})", &a.agent_id[..8.min(a.agent_id.len())])
+            })
+            .collect();
+
+        format!(
+            "\n\n--- MULTI-AGENT SYNC ---\nAgents: {} | Pending msgs: {} | Shared contexts: {}\nAuto-shared top-5 cached files.\n--- END SYNC ---",
+            agent_names.join(", "),
+            pending_count,
+            shared_count,
+        )
     }
 
     pub fn append_tool_call_log(

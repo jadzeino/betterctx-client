@@ -48,17 +48,26 @@ impl ServerHandler for LeanCtxServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        if std::env::var("BETTER_CTX_UNIFIED").is_ok()
+        let all_tools = if std::env::var("BETTER_CTX_UNIFIED").is_ok()
             && std::env::var("BETTER_CTX_FULL_TOOLS").is_err()
         {
-            return Ok(ListToolsResult {
-                tools: crate::tool_defs::unified_tool_defs(),
-                ..Default::default()
-            });
-        }
+            crate::tool_defs::unified_tool_defs()
+        } else {
+            crate::tool_defs::granular_tool_defs()
+        };
+
+        let disabled = crate::core::config::Config::load().disabled_tools_effective();
+        let tools = if disabled.is_empty() {
+            all_tools
+        } else {
+            all_tools
+                .into_iter()
+                .filter(|t| !disabled.iter().any(|d| t.name.as_ref() == d.as_str()))
+                .collect()
+        };
 
         Ok(ListToolsResult {
-            tools: crate::tool_defs::granular_tool_defs(),
+            tools,
             ..Default::default()
         })
     }
@@ -115,12 +124,38 @@ impl ServerHandler for LeanCtxServer {
             )
         };
 
+        let throttle_result = {
+            let fp = args
+                .as_ref()
+                .map(|a| {
+                    crate::core::loop_detection::LoopDetector::fingerprint(
+                        &serde_json::Value::Object(a.clone()),
+                    )
+                })
+                .unwrap_or_default();
+            let mut detector = self.loop_detector.write().await;
+            detector.record_call(name, &fp)
+        };
+
+        if throttle_result.level == crate::core::loop_detection::ThrottleLevel::Blocked {
+            let msg = throttle_result.message.unwrap_or_default();
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
+
+        let throttle_warning =
+            if throttle_result.level == crate::core::loop_detection::ThrottleLevel::Reduced {
+                throttle_result.message.clone()
+            } else {
+                None
+            };
+
         let tool_start = std::time::Instant::now();
         let result_text = match name {
             "ctx_read" => {
-                let path = get_str(args, "path")
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .ok_or_else(|| ErrorData::invalid_params("path is required", None))?;
+                let path = match get_str(args, "path") {
+                    Some(p) => self.resolve_path(&p).await,
+                    None => return Err(ErrorData::invalid_params("path is required", None)),
+                };
                 let current_task = {
                     let session = self.session.read().await;
                     session.task.as_ref().map(|t| t.description.clone())
@@ -178,14 +213,15 @@ impl ServerHandler for LeanCtxServer {
                         session.record_cache_hit();
                     }
                     if session.project_root.is_none() {
-                        if let Some(root) = detect_project_root(&path) {
+                        if let Some(root) = crate::core::protocol::detect_project_root(&path) {
                             session.project_root = Some(root.clone());
                             let mut current = self.agent_id.write().await;
                             if current.is_none() {
                                 let mut registry =
                                     crate::core::agents::AgentRegistry::load_or_create();
                                 registry.cleanup_stale(24);
-                                let id = registry.register("mcp", None, &root);
+                                let role = std::env::var("BETTER_CTX_AGENT_ROLE").ok();
+                                let id = registry.register("mcp", role.as_deref(), &root);
                                 let _ = registry.save();
                                 *current = Some(id);
                             }
@@ -240,11 +276,12 @@ impl ServerHandler for LeanCtxServer {
                 output
             }
             "ctx_multi_read" => {
-                let paths = get_str_array(args, "paths")
-                    .ok_or_else(|| ErrorData::invalid_params("paths array is required", None))?
-                    .into_iter()
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .collect::<Vec<_>>();
+                let raw_paths = get_str_array(args, "paths")
+                    .ok_or_else(|| ErrorData::invalid_params("paths array is required", None))?;
+                let mut paths = Vec::with_capacity(raw_paths.len());
+                for p in raw_paths {
+                    paths.push(self.resolve_path(&p).await);
+                }
                 let mode = get_str(args, "mode").unwrap_or_else(|| "full".to_string());
                 let current_task = {
                     let session = self.session.read().await;
@@ -275,9 +312,9 @@ impl ServerHandler for LeanCtxServer {
                 output
             }
             "ctx_tree" => {
-                let path = crate::hooks::normalize_tool_path(
-                    &get_str(args, "path").unwrap_or_else(|| ".".to_string()),
-                );
+                let path = self
+                    .resolve_path(&get_str(args, "path").unwrap_or_else(|| ".".to_string()))
+                    .await;
                 let depth = get_int(args, "depth").unwrap_or(3) as usize;
                 let show_hidden = get_bool(args, "show_hidden").unwrap_or(false);
                 let (result, original) = crate::tools::ctx_tree::handle(&path, depth, show_hidden);
@@ -294,12 +331,31 @@ impl ServerHandler for LeanCtxServer {
             "ctx_shell" => {
                 let command = get_str(args, "command")
                     .ok_or_else(|| ErrorData::invalid_params("command is required", None))?;
+
+                if let Some(rejection) = crate::tools::ctx_shell::validate_command(&command) {
+                    self.record_call("ctx_shell", 0, 0, None).await;
+                    return Ok(CallToolResult::success(vec![Content::text(rejection)]));
+                }
+
+                let explicit_cwd = get_str(args, "cwd");
+                let effective_cwd = {
+                    let session = self.session.read().await;
+                    session.effective_cwd(explicit_cwd.as_deref())
+                };
+
+                {
+                    let mut session = self.session.write().await;
+                    session.update_shell_cwd(&command);
+                }
+
                 let raw = get_bool(args, "raw").unwrap_or(false)
                     || std::env::var("BETTER_CTX_DISABLED").is_ok();
                 let cmd_clone = command.clone();
-                let output = tokio::task::spawn_blocking(move || execute_command(&cmd_clone))
-                    .await
-                    .unwrap_or_else(|e| format!("ERROR: shell task failed: {e}"));
+                let cwd_clone = effective_cwd.clone();
+                let (output, real_exit_code) =
+                    tokio::task::spawn_blocking(move || execute_command_in(&cmd_clone, &cwd_clone))
+                        .await
+                        .unwrap_or_else(|e| (format!("ERROR: shell task failed: {e}"), 1));
 
                 if raw {
                     let original = crate::core::tokens::count_tokens(&output);
@@ -336,15 +392,70 @@ impl ServerHandler for LeanCtxServer {
                     } else {
                         String::new()
                     };
+
+                    // Bug Memory: detect errors / resolve pending
+                    {
+                        let sess = self.session.read().await;
+                        let root = sess.project_root.clone();
+                        let sid = sess.id.clone();
+                        let files: Vec<String> = sess
+                            .files_touched
+                            .iter()
+                            .map(|ft| ft.path.clone())
+                            .collect();
+                        drop(sess);
+
+                        if let Some(ref root) = root {
+                            let mut store = crate::core::gotcha_tracker::GotchaStore::load(root);
+
+                            if real_exit_code != 0 {
+                                store.detect_error(&output, &command, real_exit_code, &files, &sid);
+                            } else {
+                                // Success: check if any injected gotchas prevented a repeat
+                                let relevant = store.top_relevant(&files, 7);
+                                let relevant_ids: Vec<String> =
+                                    relevant.iter().map(|g| g.id.clone()).collect();
+                                for gid in &relevant_ids {
+                                    store.mark_prevented(gid);
+                                }
+
+                                if store.try_resolve_pending(&command, &files, &sid).is_some() {
+                                    store.cross_session_boost();
+                                }
+
+                                // Promote mature gotchas to ProjectKnowledge
+                                let promotions = store.check_promotions();
+                                if !promotions.is_empty() {
+                                    let mut knowledge =
+                                        crate::core::knowledge::ProjectKnowledge::load_or_create(
+                                            root,
+                                        );
+                                    for (cat, trigger, resolution, conf) in &promotions {
+                                        knowledge.remember(
+                                            &format!("gotcha-{cat}"),
+                                            trigger,
+                                            resolution,
+                                            &sid,
+                                            *conf,
+                                        );
+                                    }
+                                    let _ = knowledge.save();
+                                }
+                            }
+
+                            let _ = store.save(root);
+                        }
+                    }
+
                     format!("{result}{savings_note}{tee_hint}")
                 }
             }
             "ctx_search" => {
                 let pattern = get_str(args, "pattern")
                     .ok_or_else(|| ErrorData::invalid_params("pattern is required", None))?;
-                let path = crate::hooks::normalize_tool_path(
-                    &get_str(args, "path").unwrap_or_else(|| ".".to_string()),
-                );
+                let path = self
+                    .resolve_path(&get_str(args, "path").unwrap_or_else(|| ".".to_string()))
+                    .await;
                 let ext = get_str(args, "ext");
                 let max = get_int(args, "max_results").unwrap_or(20) as usize;
                 let no_gitignore = get_bool(args, "ignore_gitignore").unwrap_or(false);
@@ -401,9 +512,10 @@ impl ServerHandler for LeanCtxServer {
                 result
             }
             "ctx_benchmark" => {
-                let path = get_str(args, "path")
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .ok_or_else(|| ErrorData::invalid_params("path is required", None))?;
+                let path = match get_str(args, "path") {
+                    Some(p) => self.resolve_path(&p).await,
+                    None => return Err(ErrorData::invalid_params("path is required", None)),
+                };
                 let action = get_str(args, "action").unwrap_or_default();
                 let result = if action == "project" {
                     let fmt = get_str(args, "format").unwrap_or_default();
@@ -429,9 +541,10 @@ impl ServerHandler for LeanCtxServer {
                 result
             }
             "ctx_analyze" => {
-                let path = get_str(args, "path")
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .ok_or_else(|| ErrorData::invalid_params("path is required", None))?;
+                let path = match get_str(args, "path") {
+                    Some(p) => self.resolve_path(&p).await,
+                    None => return Err(ErrorData::invalid_params("path is required", None)),
+                };
                 let result = crate::tools::ctx_analyze::handle(&path, self.crp_mode);
                 self.record_call("ctx_analyze", 0, 0, None).await;
                 result
@@ -444,9 +557,10 @@ impl ServerHandler for LeanCtxServer {
                 result
             }
             "ctx_smart_read" => {
-                let path = get_str(args, "path")
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .ok_or_else(|| ErrorData::invalid_params("path is required", None))?;
+                let path = match get_str(args, "path") {
+                    Some(p) => self.resolve_path(&p).await,
+                    None => return Err(ErrorData::invalid_params("path is required", None)),
+                };
                 let mut cache = self.cache.write().await;
                 let output = crate::tools::ctx_smart_read::handle(&mut cache, &path, self.crp_mode);
                 let original = cache.get(&path).map_or(0, |e| e.original_tokens);
@@ -462,9 +576,10 @@ impl ServerHandler for LeanCtxServer {
                 output
             }
             "ctx_delta" => {
-                let path = get_str(args, "path")
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .ok_or_else(|| ErrorData::invalid_params("path is required", None))?;
+                let path = match get_str(args, "path") {
+                    Some(p) => self.resolve_path(&p).await,
+                    None => return Err(ErrorData::invalid_params("path is required", None)),
+                };
                 let mut cache = self.cache.write().await;
                 let output = crate::tools::ctx_delta::handle(&mut cache, &path);
                 let original = cache.get(&path).map_or(0, |e| e.original_tokens);
@@ -484,9 +599,10 @@ impl ServerHandler for LeanCtxServer {
                 output
             }
             "ctx_edit" => {
-                let path = get_str(args, "path")
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .ok_or_else(|| ErrorData::invalid_params("path is required", None))?;
+                let path = match get_str(args, "path") {
+                    Some(p) => self.resolve_path(&p).await,
+                    None => return Err(ErrorData::invalid_params("path is required", None)),
+                };
                 let old_string = get_str(args, "old_string").unwrap_or_default();
                 let new_string = get_str(args, "new_string")
                     .ok_or_else(|| ErrorData::invalid_params("new_string is required", None))?;
@@ -538,11 +654,12 @@ impl ServerHandler for LeanCtxServer {
                 }
             }
             "ctx_fill" => {
-                let paths = get_str_array(args, "paths")
-                    .ok_or_else(|| ErrorData::invalid_params("paths array is required", None))?
-                    .into_iter()
-                    .map(|p| crate::hooks::normalize_tool_path(&p))
-                    .collect::<Vec<_>>();
+                let raw_paths = get_str_array(args, "paths")
+                    .ok_or_else(|| ErrorData::invalid_params("paths array is required", None))?;
+                let mut paths = Vec::with_capacity(raw_paths.len());
+                for p in raw_paths {
+                    paths.push(self.resolve_path(&p).await);
+                }
                 let budget = get_int(args, "budget")
                     .ok_or_else(|| ErrorData::invalid_params("budget is required", None))?
                     as usize;
@@ -588,10 +705,13 @@ impl ServerHandler for LeanCtxServer {
             "ctx_graph" => {
                 let action = get_str(args, "action")
                     .ok_or_else(|| ErrorData::invalid_params("action is required", None))?;
-                let path = get_str(args, "path").map(|p| crate::hooks::normalize_tool_path(&p));
-                let root = crate::hooks::normalize_tool_path(
-                    &get_str(args, "project_root").unwrap_or_else(|| ".".to_string()),
-                );
+                let path = match get_str(args, "path") {
+                    Some(p) => Some(self.resolve_path(&p).await),
+                    None => None,
+                };
+                let root = self
+                    .resolve_path(&get_str(args, "project_root").unwrap_or_else(|| ".".to_string()))
+                    .await;
                 let mut cache = self.cache.write().await;
                 let result = crate::tools::ctx_graph::handle(
                     &action,
@@ -637,11 +757,15 @@ impl ServerHandler for LeanCtxServer {
                         format!("Cache cleared — {count} file(s) removed. Next ctx_read will return full content.")
                     }
                     "invalidate" => {
-                        let path = get_str(args, "path")
-                            .map(|p| crate::hooks::normalize_tool_path(&p))
-                            .ok_or_else(|| {
-                                ErrorData::invalid_params("path is required for invalidate", None)
-                            })?;
+                        let path = match get_str(args, "path") {
+                            Some(p) => self.resolve_path(&p).await,
+                            None => {
+                                return Err(ErrorData::invalid_params(
+                                    "path is required for invalidate",
+                                    None,
+                                ))
+                            }
+                        };
                         if cache.invalidate(&path) {
                             format!(
                                 "Invalidated cache for {}. Next ctx_read will return full content.",
@@ -699,6 +823,41 @@ impl ServerHandler for LeanCtxServer {
                         .unwrap_or_else(|_| "unknown".to_string())
                 });
                 drop(session);
+
+                if action == "gotcha" {
+                    let trigger = get_str(args, "trigger").unwrap_or_default();
+                    let resolution = get_str(args, "resolution").unwrap_or_default();
+                    let severity = get_str(args, "severity").unwrap_or_default();
+                    let cat = category.as_deref().unwrap_or("convention");
+
+                    if trigger.is_empty() || resolution.is_empty() {
+                        self.record_call("ctx_knowledge", 0, 0, Some(action)).await;
+                        return Ok(CallToolResult::success(vec![Content::text(
+                            "ERROR: trigger and resolution are required for gotcha action",
+                        )]));
+                    }
+
+                    let mut store = crate::core::gotcha_tracker::GotchaStore::load(&project_root);
+                    let msg = match store.report_gotcha(
+                        &trigger,
+                        &resolution,
+                        cat,
+                        &severity,
+                        &session_id,
+                    ) {
+                        Some(gotcha) => {
+                            let conf = (gotcha.confidence * 100.0) as u32;
+                            let label = gotcha.category.short_label();
+                            format!("Gotcha recorded: [{label}] {trigger} (confidence: {conf}%)")
+                        }
+                        None => format!(
+                            "Gotcha noted: {trigger} (evicted by higher-confidence entries)"
+                        ),
+                    };
+                    let _ = store.save(&project_root);
+                    self.record_call("ctx_knowledge", 0, 0, Some(action)).await;
+                    return Ok(CallToolResult::success(vec![Content::text(msg)]));
+                }
 
                 let result = crate::tools::ctx_knowledge::handle(
                     &project_root,
@@ -758,14 +917,42 @@ impl ServerHandler for LeanCtxServer {
                 self.record_call("ctx_agent", 0, 0, Some(action)).await;
                 result
             }
+            "ctx_share" => {
+                let action = get_str(args, "action")
+                    .ok_or_else(|| ErrorData::invalid_params("action is required", None))?;
+                let to_agent = get_str(args, "to_agent");
+                let paths = get_str(args, "paths");
+                let message = get_str(args, "message");
+
+                let from_agent = self.agent_id.read().await.clone();
+                let cache = self.cache.read().await;
+                let result = crate::tools::ctx_share::handle(
+                    &action,
+                    from_agent.as_deref(),
+                    to_agent.as_deref(),
+                    paths.as_deref(),
+                    message.as_deref(),
+                    &cache,
+                );
+                drop(cache);
+
+                self.record_call("ctx_share", 0, 0, Some(action)).await;
+                result
+            }
             "ctx_overview" => {
                 let task = get_str(args, "task");
-                let path = get_str(args, "path").map(|p| crate::hooks::normalize_tool_path(&p));
+                let resolved_path = match get_str(args, "path") {
+                    Some(p) => Some(self.resolve_path(&p).await),
+                    None => {
+                        let session = self.session.read().await;
+                        session.project_root.clone()
+                    }
+                };
                 let cache = self.cache.read().await;
                 let result = crate::tools::ctx_overview::handle(
                     &cache,
                     task.as_deref(),
-                    path.as_deref(),
+                    resolved_path.as_deref(),
                     self.crp_mode,
                 );
                 drop(cache);
@@ -775,12 +962,18 @@ impl ServerHandler for LeanCtxServer {
             }
             "ctx_preload" => {
                 let task = get_str(args, "task").unwrap_or_default();
-                let path = get_str(args, "path").map(|p| crate::hooks::normalize_tool_path(&p));
+                let resolved_path = match get_str(args, "path") {
+                    Some(p) => Some(self.resolve_path(&p).await),
+                    None => {
+                        let session = self.session.read().await;
+                        session.project_root.clone()
+                    }
+                };
                 let mut cache = self.cache.write().await;
                 let result = crate::tools::ctx_preload::handle(
                     &mut cache,
                     &task,
-                    path.as_deref(),
+                    resolved_path.as_deref(),
                     self.crp_mode,
                 );
                 drop(cache);
@@ -797,9 +990,9 @@ impl ServerHandler for LeanCtxServer {
             "ctx_semantic_search" => {
                 let query = get_str(args, "query")
                     .ok_or_else(|| ErrorData::invalid_params("query is required", None))?;
-                let path = crate::hooks::normalize_tool_path(
-                    &get_str(args, "path").unwrap_or_else(|| ".".to_string()),
-                );
+                let path = self
+                    .resolve_path(&get_str(args, "path").unwrap_or_else(|| ".".to_string()))
+                    .await;
                 let top_k = get_int(args, "top_k").unwrap_or(10) as usize;
                 let action = get_str(args, "action").unwrap_or_default();
                 let result = if action == "reindex" {
@@ -809,6 +1002,45 @@ impl ServerHandler for LeanCtxServer {
                 };
                 self.record_call("ctx_semantic_search", 0, 0, Some("semantic".to_string()))
                     .await;
+                result
+            }
+            "ctx_execute" => {
+                let action = get_str(args, "action").unwrap_or_default();
+
+                let result = if action == "batch" {
+                    let items_str = get_str(args, "items").ok_or_else(|| {
+                        ErrorData::invalid_params("items is required for batch", None)
+                    })?;
+                    let items: Vec<serde_json::Value> =
+                        serde_json::from_str(&items_str).map_err(|e| {
+                            ErrorData::invalid_params(format!("Invalid items JSON: {e}"), None)
+                        })?;
+                    let batch: Vec<(String, String)> = items
+                        .iter()
+                        .filter_map(|item| {
+                            let lang = item.get("language")?.as_str()?.to_string();
+                            let code = item.get("code")?.as_str()?.to_string();
+                            Some((lang, code))
+                        })
+                        .collect();
+                    crate::tools::ctx_execute::handle_batch(&batch)
+                } else if action == "file" {
+                    let path = get_str(args, "path").ok_or_else(|| {
+                        ErrorData::invalid_params("path is required for action=file", None)
+                    })?;
+                    let intent = get_str(args, "intent");
+                    crate::tools::ctx_execute::handle_file(&path, intent.as_deref())
+                } else {
+                    let language = get_str(args, "language")
+                        .ok_or_else(|| ErrorData::invalid_params("language is required", None))?;
+                    let code = get_str(args, "code")
+                        .ok_or_else(|| ErrorData::invalid_params("code is required", None))?;
+                    let intent = get_str(args, "intent");
+                    let timeout = get_int(args, "timeout").map(|t| t as u64);
+                    crate::tools::ctx_execute::handle(&language, &code, intent.as_deref(), timeout)
+                };
+
+                self.record_call("ctx_execute", 0, 0, Some(action)).await;
                 result
             }
             _ => {
@@ -825,9 +1057,14 @@ impl ServerHandler for LeanCtxServer {
             result_text = format!("{ctx}\n\n{result_text}");
         }
 
+        if let Some(warning) = throttle_warning {
+            result_text = format!("{result_text}\n\n{warning}");
+        }
+
         if name == "ctx_read" {
-            let read_path =
-                crate::hooks::normalize_tool_path(&get_str(args, "path").unwrap_or_default());
+            let read_path = self
+                .resolve_path(&get_str(args, "path").unwrap_or_default())
+                .await;
             let project_root = {
                 let session = self.session.read().await;
                 session.project_root.clone()
@@ -874,6 +1111,7 @@ impl ServerHandler for LeanCtxServer {
                 | "ctx_session"
                 | "ctx_knowledge"
                 | "ctx_agent"
+                | "ctx_share"
                 | "ctx_wrapped"
                 | "ctx_overview"
                 | "ctx_preload"
@@ -936,37 +1174,34 @@ fn get_bool(args: &Option<serde_json::Map<String, Value>>, key: &str) -> Option<
     args.as_ref()?.get(key)?.as_bool()
 }
 
-fn execute_command(command: &str) -> String {
+fn execute_command_in(command: &str, cwd: &str) -> (String, i32) {
     let (shell, flag) = crate::shell::shell_and_flag();
-    let output = std::process::Command::new(&shell)
-        .arg(&flag)
-        .arg(command)
-        .env("BETTER_CTX_ACTIVE", "1")
-        .output();
+    let normalized_cmd = crate::tools::ctx_shell::normalize_command_for_shell(command);
+    let dir = std::path::Path::new(cwd);
+    let mut cmd = std::process::Command::new(&shell);
+    cmd.arg(&flag)
+        .arg(&normalized_cmd)
+        .env("BETTER_CTX_ACTIVE", "1");
+    if dir.is_dir() {
+        cmd.current_dir(dir);
+    }
+    let output = cmd.output();
 
     match output {
         Ok(out) => {
+            let code = out.status.code().unwrap_or(1);
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
-            if stdout.is_empty() {
+            let text = if stdout.is_empty() {
                 stderr.to_string()
             } else if stderr.is_empty() {
                 stdout.to_string()
             } else {
                 format!("{stdout}\n{stderr}")
-            }
+            };
+            (text, code)
         }
-        Err(e) => format!("ERROR: {e}"),
-    }
-}
-
-fn detect_project_root(file_path: &str) -> Option<String> {
-    let mut dir = std::path::Path::new(file_path).parent()?;
-    loop {
-        if dir.join(".git").exists() {
-            return Some(dir.to_string_lossy().to_string());
-        }
-        dir = dir.parent()?;
+        Err(e) => (format!("ERROR: {e}"), 1),
     }
 }
 
@@ -997,5 +1232,43 @@ mod tests {
     fn test_granular_tool_count() {
         let tools = crate::tool_defs::granular_tool_defs();
         assert!(tools.len() >= 25, "Expected at least 25 granular tools");
+    }
+
+    #[test]
+    fn disabled_tools_filters_list() {
+        let all = crate::tool_defs::granular_tool_defs();
+        let total = all.len();
+        let disabled = vec!["ctx_graph".to_string(), "ctx_agent".to_string()];
+        let filtered: Vec<_> = all
+            .into_iter()
+            .filter(|t| !disabled.iter().any(|d| t.name.as_ref() == d.as_str()))
+            .collect();
+        assert_eq!(filtered.len(), total - 2);
+        assert!(!filtered.iter().any(|t| t.name.as_ref() == "ctx_graph"));
+        assert!(!filtered.iter().any(|t| t.name.as_ref() == "ctx_agent"));
+    }
+
+    #[test]
+    fn empty_disabled_tools_returns_all() {
+        let all = crate::tool_defs::granular_tool_defs();
+        let total = all.len();
+        let disabled: Vec<String> = vec![];
+        let filtered: Vec<_> = all
+            .into_iter()
+            .filter(|t| !disabled.iter().any(|d| t.name.as_ref() == d.as_str()))
+            .collect();
+        assert_eq!(filtered.len(), total);
+    }
+
+    #[test]
+    fn misspelled_disabled_tool_is_silently_ignored() {
+        let all = crate::tool_defs::granular_tool_defs();
+        let total = all.len();
+        let disabled = vec!["ctx_nonexistent_tool".to_string()];
+        let filtered: Vec<_> = all
+            .into_iter()
+            .filter(|t| !disabled.iter().any(|d| t.name.as_ref() == d.as_str()))
+            .collect();
+        assert_eq!(filtered.len(), total);
     }
 }

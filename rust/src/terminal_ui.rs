@@ -156,6 +156,9 @@ pub fn print_command_box() {
         "  {d}│{r}  {cmd}{b}better-ctx dashboard{r}   {m}Web analytics (browser){r}        {d}│{r}"
     );
     println!(
+        "  {d}│{r}  {cmd}{b}better-ctx heatmap{r}     {m}Project context heat map{r}        {d}│{r}"
+    );
+    println!(
         "  {d}│{r}  {cmd}{b}better-ctx benchmark{r}   {m}Test compression quality{r}        {d}│{r}"
     );
     println!(

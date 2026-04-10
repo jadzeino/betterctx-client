@@ -22,8 +22,11 @@ pub fn exec(command: &str) -> i32 {
         return exec_inherit(command, &shell, &shell_flag);
     }
 
-    if !force_compress && io::stdout().is_terminal() {
-        return exec_inherit_tracked(command, &shell, &shell_flag);
+    if !force_compress {
+        if io::stdout().is_terminal() {
+            return exec_inherit_tracked(command, &shell, &shell_flag);
+        }
+        return exec_inherit(command, &shell, &shell_flag);
     }
 
     exec_buffered(command, &shell, &shell_flag, &cfg)
@@ -229,6 +232,28 @@ const BUILTIN_PASSTHROUGH: &[&str] = &[
     "iex",
     // Rust watchers
     "cargo watch",
+    // Authentication flows (device code, OAuth, SSO — output contains codes users must see)
+    "az login",
+    "az account",
+    "gh auth",
+    "gcloud auth",
+    "gcloud init",
+    "aws sso",
+    "aws configure sso",
+    "firebase login",
+    "netlify login",
+    "vercel login",
+    "heroku login",
+    "flyctl auth",
+    "fly auth",
+    "railway login",
+    "supabase login",
+    "wrangler login",
+    "doppler login",
+    "vault login",
+    "oc login",
+    "kubelogin",
+    "--use-device-code",
 ];
 
 fn is_excluded_command(command: &str, excluded: &[String]) -> bool {
@@ -313,6 +338,10 @@ fn compress_and_measure(command: &str, stdout: &str, stderr: &str) -> (String, u
 fn compress_if_beneficial(command: &str, output: &str) -> String {
     if output.trim().is_empty() {
         return String::new();
+    }
+
+    if crate::tools::ctx_shell::contains_auth_flow(output) {
+        return output.to_string();
     }
 
     let original_tokens = count_tokens(output);
@@ -694,5 +723,30 @@ mod passthrough_tests {
         let excl = vec!["myapp".to_string()];
         assert!(is_excluded_command("myapp serve", &excl));
         assert!(!is_excluded_command("git status", &excl));
+    }
+
+    #[test]
+    fn auth_commands_excluded() {
+        assert!(is_excluded_command("az login --use-device-code", &[]));
+        assert!(is_excluded_command("gh auth login", &[]));
+        assert!(is_excluded_command("gcloud auth login", &[]));
+        assert!(is_excluded_command("aws sso login", &[]));
+        assert!(is_excluded_command("firebase login", &[]));
+        assert!(is_excluded_command("vercel login", &[]));
+        assert!(is_excluded_command("heroku login", &[]));
+        assert!(is_excluded_command("az login", &[]));
+        assert!(is_excluded_command("kubelogin convert-kubeconfig", &[]));
+        assert!(is_excluded_command("vault login -method=oidc", &[]));
+        assert!(is_excluded_command("flyctl auth login", &[]));
+    }
+
+    #[test]
+    fn auth_exclusion_does_not_affect_normal_commands() {
+        assert!(!is_excluded_command("git log", &[]));
+        assert!(!is_excluded_command("npm run build", &[]));
+        assert!(!is_excluded_command("cargo test", &[]));
+        assert!(!is_excluded_command("aws s3 ls", &[]));
+        assert!(!is_excluded_command("gcloud compute instances list", &[]));
+        assert!(!is_excluded_command("az vm list", &[]));
     }
 }

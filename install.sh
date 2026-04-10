@@ -145,6 +145,12 @@ install_download() {
 
   mkdir -p "$INSTALL_DIR"
   install -m755 "$tmpdir/better-ctx" "$INSTALL_DIR/better-ctx"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    xattr -cr "$INSTALL_DIR/better-ctx" 2>/dev/null || true
+    codesign --force --sign - "$INSTALL_DIR/better-ctx" 2>/dev/null || true
+  fi
+
   echo "  Installed: $INSTALL_DIR/better-ctx"
 
   finish

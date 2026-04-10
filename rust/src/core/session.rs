@@ -18,6 +18,8 @@ pub struct SessionState {
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub project_root: Option<String>,
+    #[serde(default)]
+    pub shell_cwd: Option<String>,
     pub task: Option<TaskInfo>,
     pub findings: Vec<Finding>,
     pub decisions: Vec<Decision>,
@@ -107,6 +109,7 @@ impl SessionState {
             started_at: now,
             updated_at: now,
             project_root: None,
+            shell_cwd: None,
             task: None,
             findings: Vec::new(),
             decisions: Vec::new(),
@@ -233,6 +236,43 @@ impl SessionState {
         self.stats.commands_run += 1;
     }
 
+    /// Returns the effective working directory for shell commands.
+    /// Priority: explicit cwd arg > session shell_cwd > project_root > process cwd
+    pub fn effective_cwd(&self, explicit_cwd: Option<&str>) -> String {
+        if let Some(cwd) = explicit_cwd {
+            if !cwd.is_empty() && cwd != "." {
+                return cwd.to_string();
+            }
+        }
+        if let Some(ref cwd) = self.shell_cwd {
+            return cwd.clone();
+        }
+        if let Some(ref root) = self.project_root {
+            return root.clone();
+        }
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string())
+    }
+
+    /// Updates shell_cwd by detecting `cd` in the command.
+    /// Handles: `cd /abs/path`, `cd rel/path` (relative to current cwd),
+    /// `cd ..`, and chained commands like `cd foo && ...`.
+    pub fn update_shell_cwd(&mut self, command: &str) {
+        let base = self.effective_cwd(None);
+        if let Some(new_cwd) = extract_cd_target(command, &base) {
+            let path = std::path::Path::new(&new_cwd);
+            if path.exists() && path.is_dir() {
+                self.shell_cwd = Some(
+                    path.canonicalize()
+                        .unwrap_or_else(|_| path.to_path_buf())
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+        }
+    }
+
     pub fn format_compact(&self) -> String {
         let duration = self.updated_at - self.started_at;
         let hours = duration.num_hours();
@@ -328,6 +368,154 @@ impl SessionState {
         }
 
         lines.join("\n")
+    }
+
+    pub fn build_compaction_snapshot(&self) -> String {
+        const MAX_SNAPSHOT_BYTES: usize = 2048;
+
+        let mut sections: Vec<(u8, String)> = Vec::new();
+
+        if let Some(ref task) = self.task {
+            let pct = task
+                .progress_pct
+                .map_or(String::new(), |p| format!(" [{p}%]"));
+            sections.push((1, format!("<task>{}{pct}</task>", task.description)));
+        }
+
+        if !self.files_touched.is_empty() {
+            let modified: Vec<&str> = self
+                .files_touched
+                .iter()
+                .filter(|f| f.modified)
+                .map(|f| f.path.as_str())
+                .collect();
+            let read_only: Vec<&str> = self
+                .files_touched
+                .iter()
+                .filter(|f| !f.modified)
+                .take(10)
+                .map(|f| f.path.as_str())
+                .collect();
+            let mut files_section = String::new();
+            if !modified.is_empty() {
+                files_section.push_str(&format!("Modified: {}", modified.join(", ")));
+            }
+            if !read_only.is_empty() {
+                if !files_section.is_empty() {
+                    files_section.push_str(" | ");
+                }
+                files_section.push_str(&format!("Read: {}", read_only.join(", ")));
+            }
+            sections.push((1, format!("<files>{files_section}</files>")));
+        }
+
+        if !self.decisions.is_empty() {
+            let items: Vec<&str> = self.decisions.iter().map(|d| d.summary.as_str()).collect();
+            sections.push((2, format!("<decisions>{}</decisions>", items.join(" | "))));
+        }
+
+        if !self.findings.is_empty() {
+            let items: Vec<String> = self
+                .findings
+                .iter()
+                .rev()
+                .take(5)
+                .map(|f| f.summary.clone())
+                .collect();
+            sections.push((2, format!("<findings>{}</findings>", items.join(" | "))));
+        }
+
+        if !self.progress.is_empty() {
+            let items: Vec<String> = self
+                .progress
+                .iter()
+                .rev()
+                .take(5)
+                .map(|p| {
+                    let detail = p.detail.as_deref().unwrap_or("");
+                    if detail.is_empty() {
+                        p.action.clone()
+                    } else {
+                        format!("{}: {detail}", p.action)
+                    }
+                })
+                .collect();
+            sections.push((2, format!("<progress>{}</progress>", items.join(" | "))));
+        }
+
+        if let Some(ref tests) = self.test_results {
+            sections.push((
+                3,
+                format!(
+                    "<tests>{}/{} pass ({})</tests>",
+                    tests.passed, tests.total, tests.command
+                ),
+            ));
+        }
+
+        if !self.next_steps.is_empty() {
+            sections.push((
+                3,
+                format!("<next_steps>{}</next_steps>", self.next_steps.join(" | ")),
+            ));
+        }
+
+        sections.push((
+            4,
+            format!(
+                "<stats>calls={} saved={}tok</stats>",
+                self.stats.total_tool_calls, self.stats.total_tokens_saved
+            ),
+        ));
+
+        sections.sort_by_key(|(priority, _)| *priority);
+
+        let mut snapshot = String::from("<session_snapshot>\n");
+        for (_, section) in &sections {
+            if snapshot.len() + section.len() + 25 > MAX_SNAPSHOT_BYTES {
+                break;
+            }
+            snapshot.push_str(section);
+            snapshot.push('\n');
+        }
+        snapshot.push_str("</session_snapshot>");
+        snapshot
+    }
+
+    pub fn save_compaction_snapshot(&self) -> Result<String, String> {
+        let snapshot = self.build_compaction_snapshot();
+        let dir = sessions_dir().ok_or("cannot determine home directory")?;
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        let path = dir.join(format!("{}_snapshot.txt", self.id));
+        std::fs::write(&path, &snapshot).map_err(|e| e.to_string())?;
+        Ok(snapshot)
+    }
+
+    pub fn load_compaction_snapshot(session_id: &str) -> Option<String> {
+        let dir = sessions_dir()?;
+        let path = dir.join(format!("{session_id}_snapshot.txt"));
+        std::fs::read_to_string(&path).ok()
+    }
+
+    pub fn load_latest_snapshot() -> Option<String> {
+        let dir = sessions_dir()?;
+        let mut snapshots: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().to_string_lossy().ends_with("_snapshot.txt"))
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                let modified = meta.modified().ok()?;
+                Some((modified, e.path()))
+            })
+            .collect();
+
+        snapshots.sort_by(|a, b| b.0.cmp(&a.0));
+        snapshots
+            .first()
+            .and_then(|(_, path)| std::fs::read_to_string(path).ok())
     }
 
     pub fn save(&mut self) -> Result<(), String> {
@@ -471,6 +659,38 @@ fn generate_session_id() -> String {
     format!("{ts}-{random:04}")
 }
 
+/// Extracts the `cd` target from a command string.
+/// Handles patterns like `cd /foo`, `cd foo && bar`, `cd ../dir; cmd`, etc.
+fn extract_cd_target(command: &str, base_cwd: &str) -> Option<String> {
+    let first_cmd = command
+        .split("&&")
+        .next()
+        .unwrap_or(command)
+        .split(';')
+        .next()
+        .unwrap_or(command)
+        .trim();
+
+    if !first_cmd.starts_with("cd ") && first_cmd != "cd" {
+        return None;
+    }
+
+    let target = first_cmd.strip_prefix("cd")?.trim();
+    if target.is_empty() || target == "~" {
+        return dirs::home_dir().map(|h| h.to_string_lossy().to_string());
+    }
+
+    let target = target.trim_matches('"').trim_matches('\'');
+    let path = std::path::Path::new(target);
+
+    if path.is_absolute() {
+        Some(target.to_string())
+    } else {
+        let base = std::path::Path::new(base_cwd);
+        Some(base.join(target).to_string_lossy().to_string())
+    }
+}
+
 fn shorten_path(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() <= 2 {
@@ -478,4 +698,144 @@ fn shorten_path(path: &str) -> String {
     }
     let last_two: Vec<&str> = parts.iter().rev().take(2).copied().collect();
     format!("…/{}/{}", last_two[1], last_two[0])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_cd_absolute_path() {
+        let result = extract_cd_target("cd /usr/local/bin", "/home/user");
+        assert_eq!(result, Some("/usr/local/bin".to_string()));
+    }
+
+    #[test]
+    fn extract_cd_relative_path() {
+        let result = extract_cd_target("cd subdir", "/home/user");
+        let expected = std::path::Path::new("/home/user")
+            .join("subdir")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn extract_cd_with_chained_command() {
+        let result = extract_cd_target("cd /tmp && ls", "/home/user");
+        assert_eq!(result, Some("/tmp".to_string()));
+    }
+
+    #[test]
+    fn extract_cd_with_semicolon() {
+        let result = extract_cd_target("cd /tmp; ls", "/home/user");
+        assert_eq!(result, Some("/tmp".to_string()));
+    }
+
+    #[test]
+    fn extract_cd_parent_dir() {
+        let result = extract_cd_target("cd ..", "/home/user/project");
+        let expected = std::path::Path::new("/home/user/project")
+            .join("..")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(result, Some(expected));
+    }
+
+    #[test]
+    fn extract_cd_no_cd_returns_none() {
+        let result = extract_cd_target("ls -la", "/home/user");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_cd_bare_cd_goes_home() {
+        let result = extract_cd_target("cd", "/home/user");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn effective_cwd_explicit_takes_priority() {
+        let mut session = SessionState::new();
+        session.project_root = Some("/project".to_string());
+        session.shell_cwd = Some("/project/src".to_string());
+        assert_eq!(session.effective_cwd(Some("/explicit")), "/explicit");
+    }
+
+    #[test]
+    fn effective_cwd_shell_cwd_second_priority() {
+        let mut session = SessionState::new();
+        session.project_root = Some("/project".to_string());
+        session.shell_cwd = Some("/project/src".to_string());
+        assert_eq!(session.effective_cwd(None), "/project/src");
+    }
+
+    #[test]
+    fn effective_cwd_project_root_third_priority() {
+        let mut session = SessionState::new();
+        session.project_root = Some("/project".to_string());
+        assert_eq!(session.effective_cwd(None), "/project");
+    }
+
+    #[test]
+    fn effective_cwd_dot_ignored() {
+        let mut session = SessionState::new();
+        session.project_root = Some("/project".to_string());
+        assert_eq!(session.effective_cwd(Some(".")), "/project");
+    }
+
+    #[test]
+    fn compaction_snapshot_includes_task() {
+        let mut session = SessionState::new();
+        session.set_task("fix auth bug", None);
+        let snapshot = session.build_compaction_snapshot();
+        assert!(snapshot.contains("<task>fix auth bug</task>"));
+        assert!(snapshot.contains("<session_snapshot>"));
+        assert!(snapshot.contains("</session_snapshot>"));
+    }
+
+    #[test]
+    fn compaction_snapshot_includes_files() {
+        let mut session = SessionState::new();
+        session.touch_file("src/auth.rs", None, "full", 500);
+        session.files_touched[0].modified = true;
+        session.touch_file("src/main.rs", None, "map", 100);
+        let snapshot = session.build_compaction_snapshot();
+        assert!(snapshot.contains("auth.rs"));
+        assert!(snapshot.contains("<files>"));
+    }
+
+    #[test]
+    fn compaction_snapshot_includes_decisions() {
+        let mut session = SessionState::new();
+        session.add_decision("Use JWT RS256", None);
+        let snapshot = session.build_compaction_snapshot();
+        assert!(snapshot.contains("JWT RS256"));
+        assert!(snapshot.contains("<decisions>"));
+    }
+
+    #[test]
+    fn compaction_snapshot_respects_size_limit() {
+        let mut session = SessionState::new();
+        session.set_task("a]task", None);
+        for i in 0..100 {
+            session.add_finding(
+                Some(&format!("file{i}.rs")),
+                Some(i),
+                &format!("Finding number {i} with some detail text here"),
+            );
+        }
+        let snapshot = session.build_compaction_snapshot();
+        assert!(snapshot.len() <= 2200);
+    }
+
+    #[test]
+    fn compaction_snapshot_includes_stats() {
+        let mut session = SessionState::new();
+        session.stats.total_tool_calls = 42;
+        session.stats.total_tokens_saved = 10000;
+        let snapshot = session.build_compaction_snapshot();
+        assert!(snapshot.contains("calls=42"));
+        assert!(snapshot.contains("saved=10000"));
+    }
 }

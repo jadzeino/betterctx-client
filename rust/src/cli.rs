@@ -14,7 +14,9 @@ use crate::hooks::to_bash_compatible_path;
 
 pub fn cmd_read(args: &[String]) {
     if args.is_empty() {
-        eprintln!("Usage: better-ctx read <file> [--mode full|map|signatures|aggressive|entropy]");
+        eprintln!(
+            "Usage: better-ctx read <file> [--mode full|map|signatures|aggressive|entropy] [--fresh]"
+        );
         std::process::exit(1);
     }
 
@@ -25,6 +27,32 @@ pub fn cmd_read(args: &[String]) {
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
         .unwrap_or("full");
+    let force_fresh = args.iter().any(|a| a == "--fresh" || a == "--no-cache");
+
+    let short = protocol::shorten_path(path);
+
+    if !force_fresh && mode == "full" {
+        use crate::core::cli_cache::{self, CacheResult};
+        match cli_cache::check_and_read(path) {
+            CacheResult::Hit { entry, file_ref } => {
+                let msg = cli_cache::format_hit(&entry, &file_ref, &short);
+                println!("{msg}");
+                stats::record("cli_read", entry.original_tokens, msg.len());
+                return;
+            }
+            CacheResult::Miss { content } if content.is_empty() => {
+                eprintln!("Error: could not read {path}");
+                std::process::exit(1);
+            }
+            CacheResult::Miss { content } => {
+                let line_count = content.lines().count();
+                println!("{short} [{line_count}L]");
+                println!("{content}");
+                stats::record("cli_read", count_tokens(&content), count_tokens(&content));
+                return;
+            }
+        }
+    }
 
     let content = match crate::tools::ctx_read::read_file_lossy(path) {
         Ok(c) => c,
@@ -38,7 +66,6 @@ pub fn cmd_read(args: &[String]) {
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    let short = protocol::shorten_path(path);
     let line_count = content.lines().count();
     let original_tokens = count_tokens(&content);
 
@@ -156,17 +183,41 @@ pub fn cmd_grep(args: &[String]) {
     let pattern = &args[0];
     let path = args.get(1).map(|s| s.as_str()).unwrap_or(".");
 
-    let command = if cfg!(windows) {
-        format!(
-            "findstr /S /N /R \"{}\" {}\\*",
-            pattern,
-            path.replace('/', "\\")
-        )
-    } else {
-        format!("grep -rn '{}' {}", pattern.replace('\'', "'\\''"), path)
+    let re = match regex::Regex::new(pattern) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Invalid regex pattern: {e}");
+            std::process::exit(1);
+        }
     };
-    let code = crate::shell::exec(&command);
-    std::process::exit(code);
+
+    let mut found = false;
+    for entry in ignore::WalkBuilder::new(path)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .max_depth(Some(10))
+        .build()
+        .flatten()
+    {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+            continue;
+        }
+        let file_path = entry.path();
+        if let Ok(content) = std::fs::read_to_string(file_path) {
+            for (i, line) in content.lines().enumerate() {
+                if re.is_match(line) {
+                    println!("{}:{}:{}", file_path.display(), i + 1, line);
+                    found = true;
+                }
+            }
+        }
+    }
+
+    if !found {
+        std::process::exit(1);
+    }
 }
 
 pub fn cmd_find(args: &[String]) {
@@ -175,15 +226,42 @@ pub fn cmd_find(args: &[String]) {
         std::process::exit(1);
     }
 
-    let pattern = &args[0];
+    let raw_pattern = &args[0];
     let path = args.get(1).map(|s| s.as_str()).unwrap_or(".");
-    let command = if cfg!(windows) {
-        format!("dir /S /B {}\\{}", path.replace('/', "\\"), pattern)
+
+    let is_glob = raw_pattern.contains('*') || raw_pattern.contains('?');
+    let glob_matcher = if is_glob {
+        glob::Pattern::new(&raw_pattern.to_lowercase()).ok()
     } else {
-        format!("find {path} -name \"{pattern}\" -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/target/*'")
+        None
     };
-    let code = crate::shell::exec(&command);
-    std::process::exit(code);
+    let substring = raw_pattern.to_lowercase();
+
+    let mut found = false;
+    for entry in ignore::WalkBuilder::new(path)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .max_depth(Some(10))
+        .build()
+        .flatten()
+    {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        let matches = if let Some(ref g) = glob_matcher {
+            g.matches(&name)
+        } else {
+            name.contains(&substring)
+        };
+        if matches {
+            println!("{}", entry.path().display());
+            found = true;
+        }
+    }
+
+    if !found {
+        std::process::exit(1);
+    }
 }
 
 pub fn cmd_ls(args: &[String]) {
@@ -440,6 +518,51 @@ pub fn cmd_stats(args: &[String]) {
             );
             println!();
             println!("Subcommands: stats reset-cep | stats json");
+        }
+    }
+}
+
+pub fn cmd_cache(args: &[String]) {
+    use crate::core::cli_cache;
+    match args.first().map(|s| s.as_str()) {
+        Some("clear") => {
+            let count = cli_cache::clear();
+            println!("Cleared {count} cached entries.");
+        }
+        Some("stats") => {
+            let (hits, reads, entries) = cli_cache::stats();
+            let rate = if reads > 0 {
+                (hits as f64 / reads as f64 * 100.0).round() as u32
+            } else {
+                0
+            };
+            println!("CLI Cache Stats:");
+            println!("  Entries:   {entries}");
+            println!("  Reads:     {reads}");
+            println!("  Hits:      {hits}");
+            println!("  Hit Rate:  {rate}%");
+        }
+        Some("invalidate") => {
+            if args.len() < 2 {
+                eprintln!("Usage: better-ctx cache invalidate <path>");
+                std::process::exit(1);
+            }
+            cli_cache::invalidate(&args[1]);
+            println!("Invalidated cache for {}", args[1]);
+        }
+        _ => {
+            let (hits, reads, entries) = cli_cache::stats();
+            let rate = if reads > 0 {
+                (hits as f64 / reads as f64 * 100.0).round() as u32
+            } else {
+                0
+            };
+            println!("CLI File Cache: {entries} entries, {hits}/{reads} hits ({rate}%)");
+            println!();
+            println!("Subcommands:");
+            println!("  cache stats       Show detailed stats");
+            println!("  cache clear       Clear all cached entries");
+            println!("  cache invalidate  Remove specific file from cache");
         }
     }
 }
@@ -850,7 +973,7 @@ pub fn cmd_init(args: &[String]) {
     }
     println!();
     println!("For AI tool integration: better-ctx init --agent <tool>");
-    println!("  Supported: claude, cursor, gemini, codex, windsurf, cline, copilot, pi");
+    println!("  Supported: claude, cursor, gemini, codex, windsurf, cline, copilot, crush, pi");
 }
 
 fn backup_shell_config(path: &std::path::Path) {
@@ -868,7 +991,7 @@ fn backup_shell_config(path: &std::path::Path) {
     }
 }
 
-fn init_powershell(binary: &str) {
+pub fn init_powershell(binary: &str) {
     let profile_dir = dirs::home_dir().map(|h| h.join("Documents").join("PowerShell"));
     let profile_path = match profile_dir {
         Some(dir) => {
@@ -888,7 +1011,7 @@ fn init_powershell(binary: &str) {
 if (-not $env:BETTER_CTX_ACTIVE -and -not $env:BETTER_CTX_DISABLED) {{
   $LeanCtxBin = "{binary_escaped}"
   function _lc {{
-    if ($env:BETTER_CTX_DISABLED) {{ & $args[0] $args[1..($args.Length)]; return }}
+    if ($env:BETTER_CTX_DISABLED -or [Console]::IsOutputRedirected) {{ & $args[0] $args[1..($args.Length)]; return }}
     & $LeanCtxBin -c @args
     if ($LASTEXITCODE -eq 127 -or $LASTEXITCODE -eq 126) {{
       $cmd = $args[0]; $rest = $args[1..($args.Length)]
@@ -982,7 +1105,7 @@ fn remove_better_ctx_block_ps(content: &str) -> String {
     result
 }
 
-fn init_fish(binary: &str) {
+pub fn init_fish(binary: &str) {
     let config = dirs::home_dir()
         .map(|h| h.join(".config/fish/config.fish"))
         .unwrap_or_default();
@@ -992,7 +1115,7 @@ fn init_fish(binary: &str) {
         set -g _better_ctx_cmds git npm pnpm yarn cargo docker docker-compose kubectl gh pip pip3 ruff go golangci-lint eslint prettier tsc ls find grep curl wget\n\
         \n\
         function _lc\n\
-        \tif set -q BETTER_CTX_DISABLED\n\
+        \tif set -q BETTER_CTX_DISABLED; or not isatty stdout\n\
         \t\tcommand $argv\n\
         \t\treturn\n\
         \tend\n\
@@ -1080,7 +1203,7 @@ fn init_fish(binary: &str) {
     }
 }
 
-fn init_posix(is_zsh: bool, binary: &str) {
+pub fn init_posix(is_zsh: bool, binary: &str) {
     let rc_file = if is_zsh {
         dirs::home_dir()
             .map(|h| h.join(".zshrc"))
@@ -1097,7 +1220,7 @@ fn init_posix(is_zsh: bool, binary: &str) {
 _better_ctx_cmds=(git npm pnpm yarn cargo docker docker-compose kubectl gh pip pip3 ruff go golangci-lint eslint prettier tsc ls find grep curl wget php composer)
 
 _lc() {{
-    if [ -n "${{BETTER_CTX_DISABLED:-}}" ]; then
+    if [ -n "${{BETTER_CTX_DISABLED:-}}" ] || [ ! -t 1 ]; then
         command "$@"
         return
     fi
@@ -1524,6 +1647,46 @@ export EDITOR=vim
         let input = "# normal bashrc\nexport PATH=\"$HOME/bin:$PATH\"\n";
         let result = remove_better_ctx_block(input);
         assert!(result.contains("export PATH"), "content unchanged");
+    }
+
+    #[test]
+    fn test_bash_hook_contains_pipe_guard() {
+        let binary = "/usr/local/bin/better-ctx";
+        let hook = format!(
+            r#"_lc() {{
+    if [ -n "${{BETTER_CTX_DISABLED:-}}" ] || [ ! -t 1 ]; then
+        command "$@"
+        return
+    fi
+    '{binary}' -c "$@"
+}}"#
+        );
+        assert!(
+            hook.contains("! -t 1"),
+            "bash/zsh hook must contain pipe guard [ ! -t 1 ]"
+        );
+        assert!(
+            hook.contains("BETTER_CTX_DISABLED") && hook.contains("! -t 1"),
+            "pipe guard must be in the same conditional as BETTER_CTX_DISABLED"
+        );
+    }
+
+    #[test]
+    fn test_fish_hook_contains_pipe_guard() {
+        let hook = "function _lc\n\tif set -q BETTER_CTX_DISABLED; or not isatty stdout\n\t\tcommand $argv\n\t\treturn\n\tend\nend";
+        assert!(
+            hook.contains("isatty stdout"),
+            "fish hook must contain pipe guard (isatty stdout)"
+        );
+    }
+
+    #[test]
+    fn test_powershell_hook_contains_pipe_guard() {
+        let hook = "function _lc { if ($env:BETTER_CTX_DISABLED -or [Console]::IsOutputRedirected) { & $args[0] $args[1..($args.Length)]; return } }";
+        assert!(
+            hook.contains("IsOutputRedirected"),
+            "PowerShell hook must contain pipe guard ([Console]::IsOutputRedirected)"
+        );
     }
 
     #[test]

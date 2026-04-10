@@ -71,12 +71,13 @@ Modes: full|map|signatures|diff|aggressive|entropy|task|reference|lines:N-M. fre
         ),
         tool_def(
             "ctx_shell",
-            "Run shell command (compressed output, 90+ patterns). Use raw=true to skip compression and get full output.",
+            "Run shell command (compressed output, 90+ patterns). Use raw=true to skip compression. cwd sets working directory (persists across calls via cd tracking).",
             json!({
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Shell command to execute" },
-                    "raw": { "type": "boolean", "description": "Skip compression, return full uncompressed output. Use for small outputs or when full detail is critical." }
+                    "raw": { "type": "boolean", "description": "Skip compression, return full uncompressed output. Use for small outputs or when full detail is critical." },
+                    "cwd": { "type": "string", "description": "Working directory for the command. If omitted, uses last cd target or project root." }
                 },
                 "required": ["command"]
             }),
@@ -322,16 +323,32 @@ reset, list (show sessions), cleanup.",
         ),
         tool_def(
             "ctx_knowledge",
-            "Persistent project knowledge (survives sessions). Actions: remember (store fact with category+key+value), \
-recall (search by query), pattern (record naming/structure pattern), consolidate (extract session findings into knowledge), \
+            "Persistent project knowledge (survives sessions). Actions: remember (store fact with temporal tracking + contradiction detection), \
+recall (search), pattern (record convention), consolidate (extract session findings), \
+gotcha (record a bug/mistake to never repeat — trigger+resolution required), \
+timeline (view fact history for a category), rooms (list knowledge categories), \
+search (cross-session search across ALL projects), wakeup (compact AAAK briefing), \
 status (list all), remove, export.",
             json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["remember", "recall", "pattern", "consolidate", "status", "remove", "export"],
-                        "description": "Knowledge operation to perform"
+                        "enum": ["remember", "recall", "pattern", "consolidate", "gotcha", "status", "remove", "export", "timeline", "rooms", "search", "wakeup"],
+                        "description": "Knowledge operation. remember: auto-detects contradictions + tracks temporal validity. timeline: view version history. rooms: list categories. search: cross-project search. wakeup: compact AAAK briefing."
+                    },
+                    "trigger": {
+                        "type": "string",
+                        "description": "For gotcha action: what triggers the bug (e.g. 'cargo build fails with E0507 on match arms')"
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "description": "For gotcha action: how to fix/avoid it (e.g. 'Use .clone() or ref pattern')"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "warning", "info"],
+                        "description": "For gotcha action: severity level (default: warning)"
                     },
                     "category": {
                         "type": "string",
@@ -368,20 +385,23 @@ status (list all), remove, export.",
         ),
         tool_def(
             "ctx_agent",
-            "Multi-agent coordination (shared message bus). Actions: register (join with agent_type+role), \
+            "Multi-agent coordination (shared message bus + persistent diaries). Actions: register (join with agent_type+role), \
 post (broadcast or direct message with category), read (poll messages), status (update state: active|idle|finished), \
+handoff (transfer task to another agent with summary), sync (overview of all agents + pending messages + shared contexts), \
+diary (log discovery/decision/blocker/progress/insight — persisted across sessions), \
+recall_diary (read agent diary), diaries (list all agent diaries), \
 list, info.",
             json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["register", "list", "post", "read", "status", "info"],
-                        "description": "Agent operation to perform"
+                        "enum": ["register", "list", "post", "read", "status", "info", "handoff", "sync", "diary", "recall_diary", "diaries"],
+                        "description": "Agent operation. diary: persistent log (category=discovery|decision|blocker|progress|insight). recall_diary: read diary. diaries: list all."
                     },
                     "agent_type": {
                         "type": "string",
-                        "description": "Agent type for register (cursor, claude, codex, gemini, subagent)"
+                        "description": "Agent type for register (cursor, claude, codex, gemini, crush, subagent)"
                     },
                     "role": {
                         "type": "string",
@@ -403,6 +423,34 @@ list, info.",
                         "type": "string",
                         "enum": ["active", "idle", "finished"],
                         "description": "New status for status action"
+                    }
+                },
+                "required": ["action"]
+            }),
+        ),
+        tool_def(
+            "ctx_share",
+            "Share cached file contexts between agents. Actions: push (share files from your cache to another agent), \
+pull (receive files shared by other agents), list (show all shared contexts), clear (remove your shared contexts).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["push", "pull", "list", "clear"],
+                        "description": "Share operation to perform"
+                    },
+                    "paths": {
+                        "type": "string",
+                        "description": "Comma-separated file paths to share (for push action)"
+                    },
+                    "to_agent": {
+                        "type": "string",
+                        "description": "Target agent ID (omit for broadcast to all agents)"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional context message explaining what was shared"
                     }
                 },
                 "required": ["action"]
@@ -471,6 +519,44 @@ list, info.",
                 "required": ["query"]
             }),
         ),
+        tool_def(
+            "ctx_execute",
+            "Run code in sandbox (11 languages). Only stdout enters context. Raw data never leaves subprocess. Languages: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "description": "Language: javascript|typescript|python|shell|ruby|go|rust|php|perl|r|elixir"
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "Code to execute in sandbox"
+                    },
+                    "intent": {
+                        "type": "string",
+                        "description": "What you want from the output (triggers intent-driven filtering for large results)"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 30)"
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "batch — execute multiple scripts. Provide items as JSON array [{language, code}]"
+                    },
+                    "items": {
+                        "type": "string",
+                        "description": "JSON array of [{\"language\": \"...\", \"code\": \"...\"}] for batch execution"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "For action=file: process a file in sandbox (auto-detects language)"
+                    }
+                },
+                "required": ["language", "code"]
+            }),
+        ),
     ]
 }
 
@@ -492,12 +578,13 @@ pub fn unified_tool_defs() -> Vec<Tool> {
         ),
         tool_def(
             "ctx_shell",
-            "Run shell command (compressed output). raw=true skips compression.",
+            "Run shell command (compressed output). raw=true skips compression. cwd sets working directory.",
             json!({
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Shell command" },
-                    "raw": { "type": "boolean", "description": "Skip compression for full output" }
+                    "raw": { "type": "boolean", "description": "Skip compression for full output" },
+                    "cwd": { "type": "string", "description": "Working directory (defaults to last cd or project root)" }
                 },
                 "required": ["command"]
             }),
@@ -536,8 +623,8 @@ analyze (entropy), cache (status|clear|invalidate), discover (missed patterns), 
 delta (incremental diff), dedup (cross-file), fill (budget-aware batch read), intent (auto-read by task), \
 response (compress LLM text), context (session state), graph (build|related|symbol|impact|status), \
 session (load|save|task|finding|decision|status|reset|list|cleanup), \
-knowledge (remember|recall|pattern|consolidate|status|remove|export), \
-agent (register|post|read|status|list|info), overview (project map), \
+knowledge (remember|recall|pattern|consolidate|timeline|rooms|search|wakeup|status|remove|export), \
+agent (register|post|read|status|list|info|diary|recall_diary|diaries), overview (project map), \
 wrapped (savings report), benchmark (file|project), multi_read (batch), semantic_search (BM25).",
             json!({
                 "type": "object",
@@ -585,7 +672,7 @@ pub fn list_all_tool_defs() -> Vec<(&'static str, &'static str, Value)> {
 Modes: full|map|signatures|diff|aggressive|entropy|task|reference|lines:N-M. fresh=true re-reads.", json!({"type": "object", "properties": {"path": {"type": "string"}, "mode": {"type": "string"}, "start_line": {"type": "integer"}, "fresh": {"type": "boolean"}}, "required": ["path"]})),
         ("ctx_multi_read", "Batch read files in one call. Same modes as ctx_read.", json!({"type": "object", "properties": {"paths": {"type": "array", "items": {"type": "string"}}, "mode": {"type": "string"}}, "required": ["paths"]})),
         ("ctx_tree", "Directory listing with file counts.", json!({"type": "object", "properties": {"path": {"type": "string"}, "depth": {"type": "integer"}, "show_hidden": {"type": "boolean"}}})),
-        ("ctx_shell", "Run shell command (compressed output, 90+ patterns).", json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]})),
+        ("ctx_shell", "Run shell command (compressed output, 90+ patterns). cwd sets working directory.", json!({"type": "object", "properties": {"command": {"type": "string"}, "cwd": {"type": "string", "description": "Working directory"}}, "required": ["command"]})),
         ("ctx_search", "Regex code search (.gitignore aware, compact results).", json!({"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}, "ext": {"type": "string"}, "max_results": {"type": "integer"}}, "required": ["pattern"]})),
         ("ctx_compress", "Context checkpoint for long conversations.", json!({"type": "object", "properties": {"include_signatures": {"type": "boolean"}}})),
         ("ctx_benchmark", "Benchmark compression modes for a file or project.", json!({"type": "object", "properties": {"path": {"type": "string"}, "action": {"type": "string"}, "format": {"type": "string"}}, "required": ["path"]})),
@@ -605,16 +692,20 @@ Modes: full|map|signatures|diff|aggressive|entropy|task|reference|lines:N-M. fre
 symbol (lookup definition/usages as file::name), impact (blast radius of changes to path), status (index stats).", json!({"type": "object", "properties": {"action": {"type": "string"}, "path": {"type": "string"}, "project_root": {"type": "string"}}, "required": ["action"]})),
         ("ctx_session", "Cross-session memory (CCP). Actions: load (restore previous session ~400 tok), \
 save, status, task (set current task), finding (record discovery), decision (record choice), \
-reset, list (show sessions), cleanup.", json!({"type": "object", "properties": {"action": {"type": "string"}, "value": {"type": "string"}, "session_id": {"type": "string"}}, "required": ["action"]})),
-        ("ctx_knowledge", "Persistent project knowledge (survives sessions). Actions: remember (store fact with category+key+value), \
-recall (search by query), pattern (record naming/structure pattern), consolidate (extract session findings into knowledge), \
-status (list all), remove, export.", json!({"type": "object", "properties": {"action": {"type": "string"}, "category": {"type": "string"}, "key": {"type": "string"}, "value": {"type": "string"}, "query": {"type": "string"}}, "required": ["action"]})),
-        ("ctx_agent", "Multi-agent coordination (shared message bus). Actions: register (join with agent_type+role), \
-post (broadcast or direct message with category), read (poll messages), status (update state: active|idle|finished), \
-list, info.", json!({"type": "object", "properties": {"action": {"type": "string"}, "agent_type": {"type": "string"}, "role": {"type": "string"}, "message": {"type": "string"}}, "required": ["action"]})),
+reset, list (show sessions), cleanup, snapshot (build compaction snapshot ~2KB), \
+restore (rebuild state from snapshot after context compaction).", json!({"type": "object", "properties": {"action": {"type": "string"}, "value": {"type": "string"}, "session_id": {"type": "string"}}, "required": ["action"]})),
+        ("ctx_knowledge", "Persistent project knowledge with temporal facts + contradiction detection. Actions: remember (auto-tracks validity + detects contradictions), recall, pattern, consolidate, \
+gotcha (record a bug to never repeat — trigger+resolution), timeline (fact version history), rooms (list knowledge categories), \
+search (cross-session/cross-project), wakeup (compact AAAK briefing), status, remove, export.", json!({"type": "object", "properties": {"action": {"type": "string"}, "category": {"type": "string"}, "key": {"type": "string"}, "value": {"type": "string"}, "query": {"type": "string"}, "trigger": {"type": "string"}, "resolution": {"type": "string"}, "severity": {"type": "string"}}, "required": ["action"]})),
+        ("ctx_agent", "Multi-agent coordination with persistent diaries. Actions: register, \
+post, read, status, handoff, sync, diary (log discovery/decision/blocker/progress/insight — persisted), \
+recall_diary (read diary), diaries (list all), list, info.", json!({"type": "object", "properties": {"action": {"type": "string"}, "agent_type": {"type": "string"}, "role": {"type": "string"}, "message": {"type": "string"}, "to_agent": {"type": "string"}, "status": {"type": "string"}}, "required": ["action"]})),
+        ("ctx_share", "Share cached file contexts between agents. Actions: push (share files from cache), \
+pull (receive shared files), list (show all shared contexts), clear (remove your shared contexts).", json!({"type": "object", "properties": {"action": {"type": "string"}, "paths": {"type": "string"}, "to_agent": {"type": "string"}, "message": {"type": "string"}}, "required": ["action"]})),
         ("ctx_overview", "Task-relevant project map — use at session start.", json!({"type": "object", "properties": {"task": {"type": "string"}, "path": {"type": "string"}}})),
         ("ctx_preload", "Proactive context loader — reads and caches task-relevant files, returns compact L-curve-optimized summary with critical lines, imports, and signatures. Costs ~50-100 tokens instead of ~5000 for individual reads.", json!({"type": "object", "properties": {"task": {"type": "string", "description": "Task description (e.g. 'fix auth bug in validate_token')"}, "path": {"type": "string", "description": "Project root (default: .)"}}, "required": ["task"]})),
         ("ctx_wrapped", "Savings report card. Periods: week|month|all.", json!({"type": "object", "properties": {"period": {"type": "string"}}})),
         ("ctx_semantic_search", "BM25 code search by meaning. action=reindex to rebuild.", json!({"type": "object", "properties": {"query": {"type": "string"}, "path": {"type": "string"}, "top_k": {"type": "integer"}, "action": {"type": "string"}}, "required": ["query"]})),
+        ("ctx_execute", "Run code in sandbox (11 languages). Only stdout enters context. Languages: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir. Actions: batch (multiple scripts), file (process file in sandbox).", json!({"type": "object", "properties": {"language": {"type": "string"}, "code": {"type": "string"}, "intent": {"type": "string"}, "timeout": {"type": "integer"}, "action": {"type": "string"}, "items": {"type": "string"}, "path": {"type": "string"}}, "required": ["language", "code"]})),
     ]
 }
