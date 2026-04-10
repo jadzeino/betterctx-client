@@ -49,11 +49,6 @@ pub fn session_lifecycle_pre_hook(
         return None;
     }
 
-    let root = match project_root {
-        Some(r) if !r.is_empty() && r != "." => r.to_string(),
-        _ => return None,
-    };
-
     if state
         .session_initialized
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -61,6 +56,11 @@ pub fn session_lifecycle_pre_hook(
     {
         return None;
     }
+
+    let root = match project_root {
+        Some(r) if !r.is_empty() && r != "." => r.to_string(),
+        _ => return None,
+    };
 
     let result = if let Some(task_desc) = task {
         crate::tools::ctx_preload::handle(cache, task_desc, Some(&root), crp_mode)
