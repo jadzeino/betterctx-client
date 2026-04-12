@@ -148,6 +148,7 @@ impl SessionCache {
                 entry.read_count, entry.line_count
             );
             self.stats.total_sent_tokens += count_tokens(&hit_msg) as u64;
+            crate::core::events::emit_cache_hit(path, entry.original_tokens as u64);
             Some(entry)
         } else {
             None

@@ -10,7 +10,10 @@ pub mod autonomy;
 pub mod ctx_agent;
 pub mod ctx_analyze;
 pub mod ctx_benchmark;
+pub mod ctx_callees;
+pub mod ctx_callers;
 pub mod ctx_compress;
+pub mod ctx_compress_memory;
 pub mod ctx_context;
 pub mod ctx_dedup;
 pub mod ctx_delta;
@@ -19,20 +22,24 @@ pub mod ctx_edit;
 pub mod ctx_execute;
 pub mod ctx_fill;
 pub mod ctx_graph;
+pub mod ctx_graph_diagram;
 pub mod ctx_intent;
 pub mod ctx_knowledge;
 pub mod ctx_metrics;
 pub mod ctx_multi_read;
+pub mod ctx_outline;
 pub mod ctx_overview;
 pub mod ctx_preload;
 pub mod ctx_read;
 pub mod ctx_response;
+pub mod ctx_routes;
 pub mod ctx_search;
 pub mod ctx_semantic_search;
 pub mod ctx_session;
 pub mod ctx_share;
 pub mod ctx_shell;
 pub mod ctx_smart_read;
+pub mod ctx_symbol;
 pub mod ctx_tree;
 pub mod ctx_wrapped;
 
@@ -229,6 +236,15 @@ impl LeanCtxServer {
         if duration_ms > 0 {
             Self::append_tool_call_log(tool, duration_ms, original, saved, mode.as_deref(), &ts);
         }
+
+        crate::core::events::emit_tool_call(
+            tool,
+            original as u64,
+            saved as u64,
+            mode.clone(),
+            duration_ms,
+            None,
+        );
 
         let output_tokens = original.saturating_sub(saved);
         crate::core::stats::record(tool, original, output_tokens);

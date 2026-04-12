@@ -1,6 +1,6 @@
 {
   "name": "pi-better-ctx",
-  "version": "3.0.0",
+  "version": "3.0.3",
   "description": "Pi Coding Agent extension that routes bash, read, grep, find, and ls through better-ctx for 60-90% token savings",
   "keywords": ["pi-package", "better-ctx", "token-optimization", "compression"],
   "license": "MIT",

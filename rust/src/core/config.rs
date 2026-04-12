@@ -12,12 +12,45 @@ pub enum TeeMode {
     Always,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputDensity {
+    #[default]
+    Normal,
+    Terse,
+    Ultra,
+}
+
+impl OutputDensity {
+    pub fn from_env() -> Self {
+        match std::env::var("BETTER_CTX_OUTPUT_DENSITY")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "terse" => Self::Terse,
+            "ultra" => Self::Ultra,
+            _ => Self::Normal,
+        }
+    }
+
+    pub fn effective(config_val: &OutputDensity) -> Self {
+        let env_val = Self::from_env();
+        if env_val != Self::Normal {
+            return env_val;
+        }
+        config_val.clone()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub ultra_compact: bool,
     #[serde(default, deserialize_with = "deserialize_tee_mode")]
     pub tee_mode: TeeMode,
+    #[serde(default)]
+    pub output_density: OutputDensity,
     pub checkpoint_interval: u32,
     pub excluded_commands: Vec<String>,
     pub passthrough_urls: Vec<String>,
@@ -170,6 +203,7 @@ impl Default for Config {
         Self {
             ultra_compact: false,
             tee_mode: TeeMode::default(),
+            output_density: OutputDensity::default(),
             checkpoint_interval: 15,
             excluded_commands: Vec::new(),
             passthrough_urls: Vec::new(),

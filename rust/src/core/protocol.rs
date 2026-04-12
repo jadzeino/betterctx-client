@@ -1,29 +1,30 @@
 use std::path::Path;
 
-/// Finds the outermost project root by walking up from `file_path`.
-/// For monorepos with nested `.git` dirs (e.g. `mono/backend/.git` + `mono/frontend/.git`),
-/// returns the outermost ancestor containing `.git`, a workspace marker, or a known
-/// monorepo config file — so the whole monorepo is treated as one project.
+/// Finds a project root by walking up from `file_path`.
+/// Prefers the closest Git root (`.git`) to avoid accidentally selecting unrelated ancestor repos.
 pub fn detect_project_root(file_path: &str) -> Option<String> {
-    let mut dir = Path::new(file_path).parent()?;
-    let mut best: Option<String> = None;
+    let p = Path::new(file_path);
+    let mut dir = if p.is_dir() { p } else { p.parent()? };
+    let mut best_non_git: Option<String> = None;
 
     loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_string_lossy().to_string());
+        }
         if is_project_root_marker(dir) {
-            best = Some(dir.to_string_lossy().to_string());
+            best_non_git = Some(dir.to_string_lossy().to_string());
         }
         match dir.parent() {
             Some(parent) if parent != dir => dir = parent,
             _ => break,
         }
     }
-    best
+    best_non_git
 }
 
 /// Checks if a directory looks like a project root (has `.git`, workspace config, etc.).
 fn is_project_root_marker(dir: &Path) -> bool {
     const MARKERS: &[&str] = &[
-        ".git",
         "Cargo.toml",
         "package.json",
         "go.work",
@@ -43,6 +44,16 @@ fn is_project_root_marker(dir: &Path) -> bool {
 
 pub fn detect_project_root_or_cwd(file_path: &str) -> String {
     detect_project_root(file_path).unwrap_or_else(|| {
+        let p = Path::new(file_path);
+        if p.exists() {
+            if p.is_dir() {
+                return file_path.to_string();
+            }
+            if let Some(parent) = p.parent() {
+                return parent.to_string_lossy().to_string();
+            }
+            return file_path.to_string();
+        }
         std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| ".".to_string())
@@ -64,6 +75,87 @@ pub fn format_savings(original: usize, compressed: usize) -> String {
     }
     let pct = (saved as f64 / original as f64 * 100.0).round() as usize;
     format!("[{saved} tok saved ({pct}%)]")
+}
+
+/// Compresses tool output text based on density level.
+/// - Normal: no changes
+/// - Terse: strip blank lines, strip comment-only lines, remove banners
+/// - Ultra: additionally abbreviate common words
+pub fn compress_output(text: &str, density: &super::config::OutputDensity) -> String {
+    use super::config::OutputDensity;
+    match density {
+        OutputDensity::Normal => text.to_string(),
+        OutputDensity::Terse => compress_terse(text),
+        OutputDensity::Ultra => compress_ultra(text),
+    }
+}
+
+fn compress_terse(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return false;
+            }
+            if is_comment_only(trimmed) {
+                return false;
+            }
+            if is_banner_line(trimmed) {
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn compress_ultra(text: &str) -> String {
+    let terse = compress_terse(text);
+    let mut result = terse;
+    for (long, short) in ABBREVIATIONS {
+        result = result.replace(long, short);
+    }
+    result
+}
+
+const ABBREVIATIONS: &[(&str, &str)] = &[
+    ("function", "fn"),
+    ("configuration", "cfg"),
+    ("implementation", "impl"),
+    ("dependencies", "deps"),
+    ("dependency", "dep"),
+    ("request", "req"),
+    ("response", "res"),
+    ("context", "ctx"),
+    ("error", "err"),
+    ("return", "ret"),
+    ("argument", "arg"),
+    ("value", "val"),
+    ("module", "mod"),
+    ("package", "pkg"),
+    ("directory", "dir"),
+    ("parameter", "param"),
+    ("variable", "var"),
+];
+
+fn is_comment_only(line: &str) -> bool {
+    line.starts_with("//")
+        || line.starts_with('#')
+        || line.starts_with("--")
+        || (line.starts_with("/*") && line.ends_with("*/"))
+}
+
+fn is_banner_line(line: &str) -> bool {
+    if line.len() < 4 {
+        return false;
+    }
+    let chars: Vec<char> = line.chars().collect();
+    let first = chars[0];
+    if matches!(first, '=' | '-' | '*' | '─' | '━' | '▀' | '▄') {
+        let same_count = chars.iter().filter(|c| **c == first).count();
+        return same_count as f64 / chars.len() as f64 > 0.7;
+    }
+    false
 }
 
 pub struct InstructionTemplate {
@@ -176,12 +268,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_project_root_marker_detects_git() {
-        let tmp = std::env::temp_dir().join("better-ctx-test-root-marker");
+    fn compress_output_normal_unchanged() {
+        use crate::core::config::OutputDensity;
+        let input = "line1\n\nline3\n// comment\n====\nline6";
+        let result = compress_output(input, &OutputDensity::Normal);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn compress_output_terse_strips_blanks_and_comments() {
+        use crate::core::config::OutputDensity;
+        let input = "line1\n\n// comment\nline4\n----\nline6";
+        let result = compress_output(input, &OutputDensity::Terse);
+        assert!(!result.contains("\n\n"), "should remove blank lines");
+        assert!(!result.contains("// comment"), "should remove comments");
+        assert!(!result.contains("----"), "should remove banners");
+        assert!(result.contains("line1"));
+        assert!(result.contains("line4"));
+        assert!(result.contains("line6"));
+    }
+
+    #[test]
+    fn compress_output_ultra_abbreviates() {
+        use crate::core::config::OutputDensity;
+        let input = "function configuration implementation dependencies";
+        let result = compress_output(input, &OutputDensity::Ultra);
+        assert!(result.contains("fn"));
+        assert!(result.contains("cfg"));
+        assert!(result.contains("impl"));
+        assert!(result.contains("deps"));
+        assert!(!result.contains("function"));
+    }
+
+    #[test]
+    fn terse_shorter_than_normal() {
+        use crate::core::config::OutputDensity;
+        let input = "line1\n\n// header comment\nline3\n======\nline5\n\nline7";
+        let normal = compress_output(input, &OutputDensity::Normal);
+        let terse = compress_output(input, &OutputDensity::Terse);
+        assert!(terse.len() < normal.len());
+    }
+
+    #[test]
+    fn detect_project_root_finds_git_root() {
+        let tmp = std::env::temp_dir().join("better-ctx-test-git-root");
         let _ = std::fs::create_dir_all(&tmp);
         let git_dir = tmp.join(".git");
         let _ = std::fs::create_dir_all(&git_dir);
-        assert!(is_project_root_marker(&tmp));
+        let root = detect_project_root(tmp.to_str().unwrap());
+        assert_eq!(root.as_deref(), Some(tmp.to_string_lossy().as_ref()));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -195,8 +330,8 @@ mod tests {
     }
 
     #[test]
-    fn detect_project_root_finds_outermost() {
-        let base = std::env::temp_dir().join("better-ctx-test-monorepo");
+    fn detect_project_root_prefers_closest_git_root() {
+        let base = std::env::temp_dir().join("better-ctx-test-nested-git");
         let inner = base.join("packages").join("app");
         let _ = std::fs::create_dir_all(&inner);
         let _ = std::fs::create_dir_all(base.join(".git"));
@@ -206,13 +341,7 @@ mod tests {
         let _ = std::fs::write(&test_file, "fn main() {}");
 
         let root = detect_project_root(test_file.to_str().unwrap());
-        assert!(root.is_some(), "should find a project root for nested .git");
-        let root_path = std::path::PathBuf::from(root.unwrap());
-        assert_eq!(
-            root_path.canonicalize().ok(),
-            base.canonicalize().ok(),
-            "should return outermost .git, not inner"
-        );
+        assert_eq!(root.as_deref(), Some(inner.to_string_lossy().as_ref()));
 
         let _ = std::fs::remove_dir_all(&base);
     }

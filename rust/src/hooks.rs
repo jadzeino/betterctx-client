@@ -217,6 +217,21 @@ pub fn install_project_rules() {
         }
         println!("Created/updated .cursorrules in project root.");
     }
+
+    let kiro_dir = cwd.join(".kiro");
+    if kiro_dir.exists() {
+        let steering_dir = kiro_dir.join("steering");
+        let steering_file = steering_dir.join("better-ctx.md");
+        if !steering_file.exists()
+            || !std::fs::read_to_string(&steering_file)
+                .unwrap_or_default()
+                .contains("better-ctx")
+        {
+            let _ = std::fs::create_dir_all(&steering_dir);
+            write_file(&steering_file, KIRO_STEERING_TEMPLATE);
+            println!("Created .kiro/steering/better-ctx.md (Kiro steering).");
+        }
+    }
 }
 
 const AGENTS_MD_TEMPLATE: &str = "\
@@ -253,6 +268,47 @@ Edit files: use native Edit/StrReplace if available. If Edit requires Read and R
 Write, Delete, Glob — use normally. NEVER loop on Edit failures — switch to ctx_edit immediately.
 ";
 
+pub const KIRO_STEERING_TEMPLATE: &str = "\
+---
+inclusion: always
+---
+
+# better-ctx — Context Engineering Layer
+
+The workspace has the `better-ctx` MCP server installed. You MUST prefer better-ctx tools over native equivalents for token efficiency and caching.
+
+## Mandatory Tool Preferences
+
+| Use this | Instead of | Why |
+|----------|-----------|-----|
+| `mcp_better_ctx_ctx_read` | `readFile`, `readCode` | Cached reads, 8 compression modes, re-reads cost ~13 tokens |
+| `mcp_better_ctx_ctx_multi_read` | `readMultipleFiles` | Batch cached reads in one call |
+| `mcp_better_ctx_ctx_shell` | `executeBash` | Pattern compression for git/npm/test output |
+| `mcp_better_ctx_ctx_search` | `grepSearch` | Compact, .gitignore-aware results |
+| `mcp_better_ctx_ctx_tree` | `listDirectory` | Compact directory maps with file counts |
+
+## When to use native Kiro tools instead
+
+- `fsWrite` / `fsAppend` — always use native (better-ctx doesn't write files)
+- `strReplace` — always use native (precise string replacement)
+- `semanticRename` / `smartRelocate` — always use native (IDE integration)
+- `getDiagnostics` — always use native (language server diagnostics)
+- `deleteFile` — always use native
+
+## Session management
+
+- At the start of a long task, call `mcp_better_ctx_ctx_preload` with a task description to warm the cache
+- Use `mcp_better_ctx_ctx_compress` periodically in long conversations to checkpoint context
+- Use `mcp_better_ctx_ctx_knowledge` to persist important discoveries across sessions
+
+## Rules
+
+- NEVER loop on edit failures — switch to `mcp_better_ctx_ctx_edit` immediately
+- For large files, use `mcp_better_ctx_ctx_read` with `mode: \"signatures\"` or `mode: \"map\"` first
+- For re-reading a file you already read, just call `mcp_better_ctx_ctx_read` again (cache hit = ~13 tokens)
+- When running tests or build commands, use `mcp_better_ctx_ctx_shell` for compressed output
+";
+
 pub fn install_agent_hook(agent: &str, global: bool) {
     match agent {
         "claude" | "claude-code" => install_claude_hook(global),
@@ -285,13 +341,7 @@ pub fn install_agent_hook(agent: &str, global: bool) {
             "~/.jb-mcp.json",
             &dirs::home_dir().unwrap_or_default().join(".jb-mcp.json"),
         ),
-        "kiro" => install_mcp_json_agent(
-            "AWS Kiro",
-            "~/.kiro/settings/mcp.json",
-            &dirs::home_dir()
-                .unwrap_or_default()
-                .join(".kiro/settings/mcp.json"),
-        ),
+        "kiro" => install_kiro_hook(),
         "verdent" => install_mcp_json_agent(
             "Verdent",
             "~/.verdent/mcp.json",
@@ -986,32 +1036,39 @@ fn copilot_global_mcp_path() -> PathBuf {
 }
 
 fn write_vscode_mcp_file(mcp_path: &PathBuf, binary: &str, label: &str) {
+    let desired = serde_json::json!({ "command": binary, "args": [] });
     if mcp_path.exists() {
         let content = std::fs::read_to_string(mcp_path).unwrap_or_default();
-        if content.contains("better-ctx") {
-            println!("  \x1b[32m✓\x1b[0m Copilot already configured in {label}");
-            return;
-        }
-
-        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(obj) = json.as_object_mut() {
-                let servers = obj
-                    .entry("servers")
-                    .or_insert_with(|| serde_json::json!({}));
-                if let Some(servers_obj) = servers.as_object_mut() {
-                    servers_obj.insert(
-                        "better-ctx".to_string(),
-                        serde_json::json!({ "command": binary, "args": [] }),
+        match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(mut json) => {
+                if let Some(obj) = json.as_object_mut() {
+                    let servers = obj
+                        .entry("servers")
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let Some(servers_obj) = servers.as_object_mut() {
+                        if servers_obj.get("better-ctx") == Some(&desired) {
+                            println!("  \x1b[32m✓\x1b[0m Copilot already configured in {label}");
+                            return;
+                        }
+                        servers_obj.insert("better-ctx".to_string(), desired);
+                    }
+                    write_file(
+                        mcp_path,
+                        &serde_json::to_string_pretty(&json).unwrap_or_default(),
                     );
+                    println!("  \x1b[32m✓\x1b[0m Added better-ctx to {label}");
+                    return;
                 }
-                write_file(
-                    mcp_path,
-                    &serde_json::to_string_pretty(&json).unwrap_or_default(),
+            }
+            Err(e) => {
+                eprintln!(
+                    "Could not parse VS Code MCP config at {}: {e}\nAdd to \"servers\": \"better-ctx\": {{ \"command\": \"{}\", \"args\": [] }}",
+                    mcp_path.display(),
+                    binary
                 );
-                println!("  \x1b[32m✓\x1b[0m Added better-ctx to {label}");
                 return;
             }
-        }
+        };
     }
 
     if let Some(parent) = mcp_path.parent() {
@@ -1034,8 +1091,8 @@ fn write_vscode_mcp_file(mcp_path: &PathBuf, binary: &str, label: &str) {
     println!("  \x1b[32m✓\x1b[0m Created {label} with better-ctx MCP server");
 }
 
-fn write_file(path: &PathBuf, content: &str) {
-    if let Err(e) = std::fs::write(path, content) {
+fn write_file(path: &std::path::Path, content: &str) {
+    if let Err(e) = crate::config_io::write_atomic_with_backup(path, content) {
         eprintln!("Error writing {}: {e}", path.display());
     }
 }
@@ -1098,6 +1155,32 @@ fn install_crush_hook() {
         println!("  \x1b[32m✓\x1b[0m Crush MCP configured at {display_path}");
     } else {
         eprintln!("  \x1b[31m✗\x1b[0m Failed to configure Crush");
+    }
+}
+
+fn install_kiro_hook() {
+    let home = dirs::home_dir().unwrap_or_default();
+
+    install_mcp_json_agent(
+        "AWS Kiro",
+        "~/.kiro/settings/mcp.json",
+        &home.join(".kiro/settings/mcp.json"),
+    );
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let steering_dir = cwd.join(".kiro").join("steering");
+    let steering_file = steering_dir.join("better-ctx.md");
+
+    if steering_file.exists()
+        && std::fs::read_to_string(&steering_file)
+            .unwrap_or_default()
+            .contains("better-ctx")
+    {
+        println!("  Kiro steering file already exists at .kiro/steering/better-ctx.md");
+    } else {
+        let _ = std::fs::create_dir_all(&steering_dir);
+        write_file(&steering_file, KIRO_STEERING_TEMPLATE);
+        println!("  \x1b[32m✓\x1b[0m Created .kiro/steering/better-ctx.md (Kiro will now prefer better-ctx tools)");
     }
 }
 

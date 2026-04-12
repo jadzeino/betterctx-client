@@ -224,7 +224,23 @@ pub fn entropy_compress(content: &str) -> EntropyResult {
 
 pub fn entropy_compress_adaptive(content: &str, path: &str) -> EntropyResult {
     let thresholds = super::adaptive_thresholds::adaptive_thresholds(path, content);
-    entropy_compress_with_thresholds(content, thresholds.bpe_entropy, thresholds.jaccard)
+    let before_lines = content.lines().count() as u32;
+    let result =
+        entropy_compress_with_thresholds(content, thresholds.bpe_entropy, thresholds.jaccard);
+    let after_lines = result.output.lines().count() as u32;
+
+    if before_lines != after_lines {
+        super::events::emit(super::events::EventKind::Compression {
+            path: path.to_string(),
+            before_lines,
+            after_lines,
+            strategy: "entropy_adaptive".to_string(),
+            kept_line_count: after_lines,
+            removed_line_count: before_lines.saturating_sub(after_lines),
+        });
+    }
+
+    result
 }
 
 fn entropy_compress_with_thresholds(

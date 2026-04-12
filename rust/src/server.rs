@@ -206,15 +206,22 @@ impl ServerHandler for LeanCtxServer {
                 let output = format!("{stale_note}{output}");
                 let file_ref = cache.file_ref_map().get(&path).cloned();
                 drop(cache);
+                let mut ensured_root: Option<String> = None;
                 {
                     let mut session = self.session.write().await;
                     session.touch_file(&path, file_ref.as_deref(), &effective_mode, original);
                     if is_cache_hit {
                         session.record_cache_hit();
                     }
-                    if session.project_root.is_none() {
+                    let root_missing = session
+                        .project_root
+                        .as_deref()
+                        .map(|r| r.trim().is_empty())
+                        .unwrap_or(true);
+                    if root_missing {
                         if let Some(root) = crate::core::protocol::detect_project_root(&path) {
                             session.project_root = Some(root.clone());
+                            ensured_root = Some(root.clone());
                             let mut current = self.agent_id.write().await;
                             if current.is_none() {
                                 let mut registry =
@@ -227,6 +234,9 @@ impl ServerHandler for LeanCtxServer {
                             }
                         }
                     }
+                }
+                if let Some(root) = ensured_root.as_deref() {
+                    crate::core::index_orchestrator::ensure_all_background(root);
                 }
                 self.record_call("ctx_read", original, saved, Some(mode.clone()))
                     .await;
@@ -343,9 +353,39 @@ impl ServerHandler for LeanCtxServer {
                     session.effective_cwd(explicit_cwd.as_deref())
                 };
 
-                {
+                let ensured_root = {
                     let mut session = self.session.write().await;
                     session.update_shell_cwd(&command);
+                    let root_missing = session
+                        .project_root
+                        .as_deref()
+                        .map(|r| r.trim().is_empty())
+                        .unwrap_or(true);
+                    if !root_missing {
+                        None
+                    } else {
+                        let home = dirs::home_dir().map(|h| h.to_string_lossy().to_string());
+                        crate::core::protocol::detect_project_root(&effective_cwd).and_then(|r| {
+                            if home.as_deref() == Some(r.as_str()) {
+                                None
+                            } else {
+                                session.project_root = Some(r.clone());
+                                Some(r)
+                            }
+                        })
+                    }
+                };
+                if let Some(root) = ensured_root.as_deref() {
+                    crate::core::index_orchestrator::ensure_all_background(root);
+                    let mut current = self.agent_id.write().await;
+                    if current.is_none() {
+                        let mut registry = crate::core::agents::AgentRegistry::load_or_create();
+                        registry.cleanup_stale(24);
+                        let role = std::env::var("BETTER_CTX_AGENT_ROLE").ok();
+                        let id = registry.register("mcp", role.as_deref(), root);
+                        let _ = registry.save();
+                        *current = Some(id);
+                    }
                 }
 
                 let raw = get_bool(args, "raw").unwrap_or(false)
@@ -995,10 +1035,21 @@ impl ServerHandler for LeanCtxServer {
                     .await;
                 let top_k = get_int(args, "top_k").unwrap_or(10) as usize;
                 let action = get_str(args, "action").unwrap_or_default();
+                let mode = get_str(args, "mode");
+                let languages = get_str_array(args, "languages");
+                let path_glob = get_str(args, "path_glob");
                 let result = if action == "reindex" {
                     crate::tools::ctx_semantic_search::handle_reindex(&path)
                 } else {
-                    crate::tools::ctx_semantic_search::handle(&query, &path, top_k, self.crp_mode)
+                    crate::tools::ctx_semantic_search::handle(
+                        &query,
+                        &path,
+                        top_k,
+                        self.crp_mode,
+                        languages,
+                        path_glob.as_deref(),
+                        mode.as_deref(),
+                    )
                 };
                 self.record_call("ctx_semantic_search", 0, 0, Some("semantic".to_string()))
                     .await;
@@ -1043,6 +1094,119 @@ impl ServerHandler for LeanCtxServer {
                 self.record_call("ctx_execute", 0, 0, Some(action)).await;
                 result
             }
+            "ctx_symbol" => {
+                let sym_name = get_str(args, "name")
+                    .ok_or_else(|| ErrorData::invalid_params("name is required", None))?;
+                let file = get_str(args, "file");
+                let kind = get_str(args, "kind");
+                let session = self.session.read().await;
+                let project_root = session
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| ".".to_string());
+                drop(session);
+                let (result, original) = crate::tools::ctx_symbol::handle(
+                    &sym_name,
+                    file.as_deref(),
+                    kind.as_deref(),
+                    &project_root,
+                );
+                let sent = crate::core::tokens::count_tokens(&result);
+                let saved = original.saturating_sub(sent);
+                self.record_call("ctx_symbol", original, saved, kind).await;
+                result
+            }
+            "ctx_graph_diagram" => {
+                let file = get_str(args, "file");
+                let depth = get_int(args, "depth").map(|d| d as usize);
+                let kind = get_str(args, "kind");
+                let session = self.session.read().await;
+                let project_root = session
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| ".".to_string());
+                drop(session);
+                let result = crate::tools::ctx_graph_diagram::handle(
+                    file.as_deref(),
+                    depth,
+                    kind.as_deref(),
+                    &project_root,
+                );
+                self.record_call("ctx_graph_diagram", 0, 0, kind).await;
+                result
+            }
+            "ctx_routes" => {
+                let method = get_str(args, "method");
+                let path_prefix = get_str(args, "path");
+                let session = self.session.read().await;
+                let project_root = session
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| ".".to_string());
+                drop(session);
+                let result = crate::tools::ctx_routes::handle(
+                    method.as_deref(),
+                    path_prefix.as_deref(),
+                    &project_root,
+                );
+                self.record_call("ctx_routes", 0, 0, None).await;
+                result
+            }
+            "ctx_compress_memory" => {
+                let path = self
+                    .resolve_path(
+                        &get_str(args, "path")
+                            .ok_or_else(|| ErrorData::invalid_params("path is required", None))?,
+                    )
+                    .await;
+                let result = crate::tools::ctx_compress_memory::handle(&path);
+                self.record_call("ctx_compress_memory", 0, 0, None).await;
+                result
+            }
+            "ctx_callers" => {
+                let symbol = get_str(args, "symbol")
+                    .ok_or_else(|| ErrorData::invalid_params("symbol is required", None))?;
+                let file = get_str(args, "file");
+                let session = self.session.read().await;
+                let project_root = session
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| ".".to_string());
+                drop(session);
+                let result =
+                    crate::tools::ctx_callers::handle(&symbol, file.as_deref(), &project_root);
+                self.record_call("ctx_callers", 0, 0, None).await;
+                result
+            }
+            "ctx_callees" => {
+                let symbol = get_str(args, "symbol")
+                    .ok_or_else(|| ErrorData::invalid_params("symbol is required", None))?;
+                let file = get_str(args, "file");
+                let session = self.session.read().await;
+                let project_root = session
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| ".".to_string());
+                drop(session);
+                let result =
+                    crate::tools::ctx_callees::handle(&symbol, file.as_deref(), &project_root);
+                self.record_call("ctx_callees", 0, 0, None).await;
+                result
+            }
+            "ctx_outline" => {
+                let path = self
+                    .resolve_path(
+                        &get_str(args, "path")
+                            .ok_or_else(|| ErrorData::invalid_params("path is required", None))?,
+                    )
+                    .await;
+                let kind = get_str(args, "kind");
+                let (result, original) = crate::tools::ctx_outline::handle(&path, kind.as_deref());
+                let sent = crate::core::tokens::count_tokens(&result);
+                let saved = original.saturating_sub(sent);
+                self.record_call("ctx_outline", original, saved, kind).await;
+                result
+            }
             _ => {
                 return Err(ErrorData::invalid_params(
                     format!("Unknown tool: {name}"),
@@ -1052,6 +1216,12 @@ impl ServerHandler for LeanCtxServer {
         };
 
         let mut result_text = result_text;
+
+        {
+            let config = crate::core::config::Config::load();
+            let density = crate::core::config::OutputDensity::effective(&config.output_density);
+            result_text = crate::core::protocol::compress_output(&result_text, &density);
+        }
 
         if let Some(ctx) = auto_context {
             result_text = format!("{ctx}\n\n{result_text}");

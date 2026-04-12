@@ -62,6 +62,12 @@ pub struct DayStats {
 }
 
 fn stats_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("BETTER_CTX_DATA_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
     dirs::home_dir().map(|h| h.join(".better-ctx"))
 }
 
@@ -403,8 +409,20 @@ impl CostModel {
         let input_cost_with =
             store.total_output_tokens as f64 / 1_000_000.0 * self.input_price_per_m;
 
+        let input_saved = store
+            .total_input_tokens
+            .saturating_sub(store.total_output_tokens);
+        let compression_rate = if store.total_input_tokens > 0 {
+            input_saved as f64 / store.total_input_tokens as f64
+        } else {
+            0.0
+        };
         let est_output_without = store.total_commands * self.avg_verbose_output_per_call;
-        let est_output_with = store.total_commands * self.avg_concise_output_per_call;
+        let est_output_with = if compression_rate > 0.01 {
+            store.total_commands * self.avg_concise_output_per_call
+        } else {
+            est_output_without
+        };
         let output_saved = est_output_without.saturating_sub(est_output_with);
 
         let output_cost_without = est_output_without as f64 / 1_000_000.0 * self.output_price_per_m;
@@ -677,16 +695,32 @@ pub fn format_cep_report() -> String {
     o.push(String::new());
 
     if total_saved == 0 && cep.modes.is_empty() {
-        o.push(format!(
-            "  {wrn}⚠  MCP server not configured.{r} Shell hook compresses output, but"
-        ));
-        o.push(
-            "     full token savings require MCP tools (ctx_read, ctx_shell, ctx_search)."
-                .to_string(),
-        );
-        o.push(format!(
-            "     Run {sec}better-ctx setup{r} to auto-configure your editors."
-        ));
+        if store.total_commands > 20 {
+            o.push(format!(
+                "  {wrn}⚠  MCP tools configured but not being used by your AI client.{r}"
+            ));
+            o.push(
+                "     Your AI client may be using native Read/Shell instead of ctx_read/ctx_shell."
+                    .to_string(),
+            );
+            o.push(format!(
+                "     Run {sec}better-ctx init{r} to update rules, then restart your AI session."
+            ));
+            o.push(format!(
+                "     Run {sec}better-ctx doctor{r} for detailed adoption diagnostics."
+            ));
+        } else {
+            o.push(format!(
+                "  {wrn}⚠  MCP server not configured.{r} Shell hook compresses output, but"
+            ));
+            o.push(
+                "     full token savings require MCP tools (ctx_read, ctx_shell, ctx_search)."
+                    .to_string(),
+            );
+            o.push(format!(
+                "     Run {sec}better-ctx setup{r} to auto-configure your editors."
+            ));
+        }
         o.push(String::new());
     }
 
@@ -767,6 +801,10 @@ pub fn format_gain() -> String {
 }
 
 pub fn format_gain_themed(t: &Theme) -> String {
+    format_gain_themed_at(t, None)
+}
+
+pub fn format_gain_themed_at(t: &Theme, tick: Option<u64>) -> String {
     let store = load();
     let mut o = Vec::new();
     let r = theme::rst();
@@ -845,7 +883,7 @@ pub fn format_gain_themed(t: &Theme) -> String {
         let cfg = crate::core::config::Config::load();
         if cfg.buddy_enabled {
             let buddy = crate::core::buddy::BuddyState::compute();
-            o.push(crate::core::buddy::format_buddy_block(&buddy, t));
+            o.push(crate::core::buddy::format_buddy_block_at(&buddy, t, tick));
         }
     }
 
@@ -1097,20 +1135,24 @@ fn build_tips(store: &StatsStore) -> Vec<String> {
 pub fn gain_live() {
     use std::io::Write;
 
-    let interval = std::time::Duration::from_secs(2);
+    let interval = std::time::Duration::from_secs(1);
     let mut line_count = 0usize;
     let d = theme::dim();
     let r = theme::rst();
 
-    eprintln!("  {d}▸ Live mode (2s refresh) · Ctrl+C to exit{r}");
+    eprintln!("  {d}▸ Live mode (1s refresh) · Ctrl+C to exit{r}");
 
     loop {
         if line_count > 0 {
             print!("\x1B[{line_count}A\x1B[J");
         }
 
-        let output = format_gain();
-        let footer = format!("\n  {d}▸ Live · updates every 2s · Ctrl+C to exit{r}\n");
+        let tick = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis() as u64);
+        let output = format_gain_themed_at(&active_theme(), tick);
+        let footer = format!("\n  {d}▸ Live · updates every 1s · Ctrl+C to exit{r}\n");
         let full = format!("{output}{footer}");
         line_count = full.lines().count();
 

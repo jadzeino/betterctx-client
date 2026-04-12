@@ -153,11 +153,24 @@ impl FeedbackStore {
                 avg_efficiency: 0.0,
             });
 
-        let momentum = 0.7; // favor existing values for stability
+        let momentum = 0.7;
+        let old_entropy = entry.entropy;
+        let old_jaccard = entry.jaccard;
         entry.entropy = entry.entropy * momentum + best_entropy * (1.0 - momentum);
         entry.jaccard = entry.jaccard * momentum + best_jaccard * (1.0 - momentum);
         entry.sample_count = relevant.len() as u32;
         entry.avg_efficiency = best_efficiency;
+
+        if (old_entropy - entry.entropy).abs() > 0.01 || (old_jaccard - entry.jaccard).abs() > 0.01
+        {
+            crate::core::events::emit(crate::core::events::EventKind::ThresholdShift {
+                language: language.to_string(),
+                old_entropy,
+                new_entropy: entry.entropy,
+                old_jaccard,
+                new_jaccard: entry.jaccard,
+            });
+        }
     }
 
     pub fn get_learned_entropy(&self, language: &str) -> Option<f64> {

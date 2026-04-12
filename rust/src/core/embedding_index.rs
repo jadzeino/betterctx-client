@@ -51,12 +51,7 @@ impl EmbeddingIndex {
 
     /// Determine which files need re-embedding based on content hashes.
     pub fn files_needing_update(&self, chunks: &[CodeChunk]) -> Vec<String> {
-        let mut current_hashes: HashMap<String, String> = HashMap::new();
-        for chunk in chunks {
-            current_hashes
-                .entry(chunk.file_path.clone())
-                .or_insert_with(|| hash_content(&chunk.content));
-        }
+        let current_hashes = compute_file_hashes(chunks);
 
         let mut needs_update = Vec::new();
         for (file, hash) in &current_hashes {
@@ -90,11 +85,16 @@ impl EmbeddingIndex {
             self.file_hashes.remove(file);
         }
 
+        let current_hashes = compute_file_hashes(chunks);
+        for file in changed_files {
+            if let Some(hash) = current_hashes.get(file) {
+                self.file_hashes.insert(file.clone(), hash.clone());
+            }
+        }
+
         for &(chunk_idx, ref embedding) in new_embeddings {
             if let Some(chunk) = chunks.get(chunk_idx) {
                 let content_hash = hash_content(&chunk.content);
-                self.file_hashes
-                    .insert(chunk.file_path.clone(), content_hash.clone());
                 self.entries.push(EmbeddingEntry {
                     file_path: chunk.file_path.clone(),
                     symbol_name: chunk.symbol_name.clone(),
@@ -110,17 +110,17 @@ impl EmbeddingIndex {
     /// Get all embeddings in chunk order (aligned with BM25Index.chunks).
     /// Returns None if index doesn't cover all chunks.
     pub fn get_aligned_embeddings(&self, chunks: &[CodeChunk]) -> Option<Vec<Vec<f32>>> {
-        let mut result = Vec::with_capacity(chunks.len());
-
-        for chunk in chunks {
-            let entry = self.entries.iter().find(|e| {
-                e.file_path == chunk.file_path
-                    && e.start_line == chunk.start_line
-                    && e.end_line == chunk.end_line
-            })?;
-            result.push(entry.embedding.clone());
+        let mut map: HashMap<(&str, usize, usize), &EmbeddingEntry> =
+            HashMap::with_capacity(self.entries.len());
+        for e in &self.entries {
+            map.insert((e.file_path.as_str(), e.start_line, e.end_line), e);
         }
 
+        let mut result = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            let entry = map.get(&(chunk.file_path.as_str(), chunk.start_line, chunk.end_line))?;
+            result.push(entry.embedding.clone());
+        }
         Some(result)
     }
 
@@ -165,6 +165,52 @@ fn hash_content(content: &str) -> String {
     let mut hasher = Md5::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn compute_file_hashes(chunks: &[CodeChunk]) -> HashMap<String, String> {
+    let mut by_file: HashMap<&str, Vec<&CodeChunk>> = HashMap::new();
+    for chunk in chunks {
+        by_file
+            .entry(chunk.file_path.as_str())
+            .or_default()
+            .push(chunk);
+    }
+
+    let mut out: HashMap<String, String> = HashMap::with_capacity(by_file.len());
+    for (file, mut file_chunks) in by_file {
+        file_chunks.sort_by(|a, b| {
+            (a.start_line, a.end_line, a.symbol_name.as_str()).cmp(&(
+                b.start_line,
+                b.end_line,
+                b.symbol_name.as_str(),
+            ))
+        });
+
+        let mut hasher = Md5::new();
+        hasher.update(file.as_bytes());
+        for c in file_chunks {
+            hasher.update(c.start_line.to_le_bytes());
+            hasher.update(c.end_line.to_le_bytes());
+            hasher.update(c.symbol_name.as_bytes());
+            hasher.update([kind_tag(&c.kind)]);
+            hasher.update(c.content.as_bytes());
+        }
+        out.insert(file.to_string(), format!("{:x}", hasher.finalize()));
+    }
+    out
+}
+
+fn kind_tag(kind: &super::vector_index::ChunkKind) -> u8 {
+    use super::vector_index::ChunkKind;
+    match kind {
+        ChunkKind::Function => 1,
+        ChunkKind::Struct => 2,
+        ChunkKind::Impl => 3,
+        ChunkKind::Module => 4,
+        ChunkKind::Class => 5,
+        ChunkKind::Method => 6,
+        ChunkKind::Other => 7,
+    }
 }
 
 #[cfg(test)]
@@ -234,6 +280,30 @@ mod tests {
         assert!(
             needs.contains(&"a.rs".to_string()),
             "changed file should need update"
+        );
+    }
+
+    #[test]
+    fn files_needing_update_detects_change_in_later_chunk() {
+        let mut idx = EmbeddingIndex::new(3);
+        let chunks_v1 = vec![
+            make_chunk("a.rs", "fn_a", "fn a() {}", 1, 3),
+            make_chunk("a.rs", "fn_b", "fn b() {}", 10, 12),
+        ];
+        idx.update(
+            &chunks_v1,
+            &[(0, vec![0.1, 0.1, 0.1]), (1, vec![0.2, 0.2, 0.2])],
+            &["a.rs".to_string()],
+        );
+
+        let chunks_v2 = vec![
+            make_chunk("a.rs", "fn_a", "fn a() {}", 1, 3),
+            make_chunk("a.rs", "fn_b", "fn b() { changed }", 10, 12),
+        ];
+        let needs = idx.files_needing_update(&chunks_v2);
+        assert!(
+            needs.contains(&"a.rs".to_string()),
+            "changing a later chunk should trigger re-embedding"
         );
     }
 

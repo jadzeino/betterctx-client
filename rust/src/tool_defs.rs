@@ -507,14 +507,28 @@ pull (receive files shared by other agents), list (show all shared contexts), cl
         ),
         tool_def(
             "ctx_semantic_search",
-            "BM25 code search by meaning. action=reindex to rebuild.",
+            "Semantic code search (BM25 + optional embeddings/hybrid). action=reindex to rebuild.",
             json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Natural language search query" },
                     "path": { "type": "string", "description": "Project root to search (default: .)" },
                     "top_k": { "type": "integer", "description": "Number of results (default: 10)" },
-                    "action": { "type": "string", "description": "reindex to rebuild index" }
+                    "action": { "type": "string", "description": "reindex to rebuild index" },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["bm25", "dense", "hybrid"],
+                        "description": "Search mode (default: hybrid). bm25=lexical only, dense=embeddings only, hybrid=BM25+embeddings"
+                    },
+                    "languages": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional: restrict to languages/extensions (e.g. [\"rust\",\"ts\",\"py\"] or [\"rs\",\"tsx\"])"
+                    },
+                    "path_glob": {
+                        "type": "string",
+                        "description": "Optional: glob over relative file paths (e.g. \"rust/src/**\" or \"**/*.rs\")"
+                    }
                 },
                 "required": ["query"]
             }),
@@ -555,6 +569,92 @@ pull (receive files shared by other agents), list (show all shared contexts), cl
                     }
                 },
                 "required": ["language", "code"]
+            }),
+        ),
+        tool_def(
+            "ctx_symbol",
+            "Read a specific symbol (function, struct, class) by name. Returns only the symbol \
+code block instead of the entire file. 90-97% fewer tokens than full file read.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Symbol name (function, struct, class, method)" },
+                    "file": { "type": "string", "description": "Optional: file path to narrow search" },
+                    "kind": { "type": "string", "description": "Optional: fn|struct|class|method|trait|enum" }
+                },
+                "required": ["name"]
+            }),
+        ),
+        tool_def(
+            "ctx_graph_diagram",
+            "Generate a Mermaid diagram of the dependency or call graph. Useful for understanding architecture.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "Optional: scope to dependencies of a specific file" },
+                    "depth": { "type": "integer", "description": "Max depth (default: 2)" },
+                    "kind": { "type": "string", "description": "deps (file dependencies) or calls (symbol call graph)" }
+                }
+            }),
+        ),
+        tool_def(
+            "ctx_routes",
+            "List HTTP routes/endpoints extracted from the project. Supports Express, Flask, FastAPI, Actix, Spring, Rails, Next.js.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "method": { "type": "string", "description": "Optional: GET, POST, PUT, DELETE" },
+                    "path": { "type": "string", "description": "Optional: path prefix filter, e.g. /api/users" }
+                }
+            }),
+        ),
+        tool_def(
+            "ctx_compress_memory",
+            "Compress a memory/config file (CLAUDE.md, .cursorrules, etc.) to save tokens on every session start. \
+Preserves code blocks, URLs, paths, headings, tables. Creates .original.md backup.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to memory file" }
+                },
+                "required": ["path"]
+            }),
+        ),
+        tool_def(
+            "ctx_callers",
+            "Find all symbols that call a given function/method. Returns caller file, symbol, and line.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "symbol": { "type": "string", "description": "Symbol name to find callers of" },
+                    "file": { "type": "string", "description": "Optional: scope to a specific file" }
+                },
+                "required": ["symbol"]
+            }),
+        ),
+        tool_def(
+            "ctx_callees",
+            "Find all functions/methods called by a given symbol. Returns callee name, file, and line.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "symbol": { "type": "string", "description": "Symbol name to find callees of" },
+                    "file": { "type": "string", "description": "Optional: scope to a specific file" }
+                },
+                "required": ["symbol"]
+            }),
+        ),
+        tool_def(
+            "ctx_outline",
+            "List all symbols in a file (functions, structs, classes, methods) with signatures. \
+Much fewer tokens than reading the full file.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path" },
+                    "kind": { "type": "string", "description": "Optional filter: fn|struct|class|all" }
+                },
+                "required": ["path"]
             }),
         ),
     ]
@@ -705,7 +805,14 @@ pull (receive shared files), list (show all shared contexts), clear (remove your
         ("ctx_overview", "Task-relevant project map — use at session start.", json!({"type": "object", "properties": {"task": {"type": "string"}, "path": {"type": "string"}}})),
         ("ctx_preload", "Proactive context loader — reads and caches task-relevant files, returns compact L-curve-optimized summary with critical lines, imports, and signatures. Costs ~50-100 tokens instead of ~5000 for individual reads.", json!({"type": "object", "properties": {"task": {"type": "string", "description": "Task description (e.g. 'fix auth bug in validate_token')"}, "path": {"type": "string", "description": "Project root (default: .)"}}, "required": ["task"]})),
         ("ctx_wrapped", "Savings report card. Periods: week|month|all.", json!({"type": "object", "properties": {"period": {"type": "string"}}})),
-        ("ctx_semantic_search", "BM25 code search by meaning. action=reindex to rebuild.", json!({"type": "object", "properties": {"query": {"type": "string"}, "path": {"type": "string"}, "top_k": {"type": "integer"}, "action": {"type": "string"}}, "required": ["query"]})),
+        ("ctx_semantic_search", "Semantic code search (BM25 + optional embeddings/hybrid). action=reindex to rebuild.", json!({"type": "object", "properties": {"query": {"type": "string"}, "path": {"type": "string"}, "top_k": {"type": "integer"}, "action": {"type": "string"}, "mode": {"type": "string", "enum": ["bm25","dense","hybrid"]}, "languages": {"type": "array", "items": {"type": "string"}}, "path_glob": {"type": "string"}}, "required": ["query"]})),
         ("ctx_execute", "Run code in sandbox (11 languages). Only stdout enters context. Languages: javascript, typescript, python, shell, ruby, go, rust, php, perl, r, elixir. Actions: batch (multiple scripts), file (process file in sandbox).", json!({"type": "object", "properties": {"language": {"type": "string"}, "code": {"type": "string"}, "intent": {"type": "string"}, "timeout": {"type": "integer"}, "action": {"type": "string"}, "items": {"type": "string"}, "path": {"type": "string"}}, "required": ["language", "code"]})),
+        ("ctx_symbol", "Read a specific symbol (function, struct, class) by name. Returns only the symbol code block instead of the entire file. 90-97% fewer tokens than full file read.", json!({"type": "object", "properties": {"name": {"type": "string"}, "file": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]})),
+        ("ctx_outline", "List all symbols in a file with signatures. Much fewer tokens than reading the full file.", json!({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"}}, "required": ["path"]})),
+        ("ctx_compress_memory", "Compress a memory/config file (CLAUDE.md, .cursorrules) preserving code, URLs, paths. Creates .original.md backup.", json!({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]})),
+        ("ctx_callers", "Find all symbols that call a given function/method.", json!({"type": "object", "properties": {"symbol": {"type": "string"}, "file": {"type": "string"}}, "required": ["symbol"]})),
+        ("ctx_callees", "Find all functions/methods called by a given symbol.", json!({"type": "object", "properties": {"symbol": {"type": "string"}, "file": {"type": "string"}}, "required": ["symbol"]})),
+        ("ctx_routes", "List HTTP routes/endpoints extracted from the project. Supports Express, Flask, FastAPI, Actix, Spring, Rails, Next.js.", json!({"type": "object", "properties": {"method": {"type": "string"}, "path": {"type": "string"}}})),
+        ("ctx_graph_diagram", "Generate a Mermaid diagram of the dependency or call graph.", json!({"type": "object", "properties": {"file": {"type": "string"}, "depth": {"type": "integer"}, "kind": {"type": "string"}}})),
     ]
 }

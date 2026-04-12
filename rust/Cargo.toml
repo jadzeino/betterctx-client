@@ -1,6 +1,6 @@
 [package]
 name = "better-ctx"
-version = "3.0.0"
+version = "3.0.3"
 edition = "2021"
 description = "Context Intelligence Engine with CCP. 34 MCP tools, 8 read modes, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge with temporal facts + contradiction detection, multi-agent context sharing + diaries, LITM-aware positioning, AAAK compact format, adaptive compression with Thompson Sampling bandits. Supports 24 AI tools. Reduces LLM token consumption by up to 99%."
 license = "MIT"
@@ -92,6 +92,8 @@ tree-sitter-dart = { version = "0.1", optional = true }
 rten = { version = "0.24", optional = true }
 rten-tensor = { version = "0.24", optional = true }
 glob = "0.3.3"
+ratatui = "0.30"
+crossterm = "0.28"
 
 [profile.release]
 opt-level = "z"

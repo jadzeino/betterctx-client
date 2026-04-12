@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -22,6 +24,15 @@ pub async fn start(port: Option<u16>, host: Option<String>) {
 
     let addr = format!("{host}:{port}");
     let is_local = host == "127.0.0.1" || host == "localhost" || host == "::1";
+
+    // Avoid accidental multiple dashboard instances (common source of "it hangs").
+    // Only safe to auto-detect for local dashboards without auth.
+    if is_local && dashboard_responding(&host, port) {
+        println!("\n  better-ctx dashboard already running → http://{host}:{port}");
+        println!("  Tip: use Ctrl+C in the existing terminal to stop it.\n");
+        open_browser(&format!("http://localhost:{port}"));
+        return;
+    }
 
     let token = if !is_local {
         let t = generate_token();
@@ -98,7 +109,10 @@ fn open_browser(url: &str) {
 
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        let _ = std::process::Command::new("xdg-open")
+            .arg(url)
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
 
     #[cfg(target_os = "windows")]
@@ -107,6 +121,35 @@ fn open_browser(url: &str) {
             .args(["/C", "start", url])
             .spawn();
     }
+}
+
+fn dashboard_responding(host: &str, port: u16) -> bool {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let addr = format!("{host}:{port}");
+    let Ok(mut s) = TcpStream::connect_timeout(
+        &addr
+            .parse()
+            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], port))),
+        Duration::from_millis(150),
+    ) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_millis(150)));
+    let _ = s.set_write_timeout(Some(Duration::from_millis(150)));
+
+    let req = "GET /api/version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    if s.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 256];
+    let Ok(n) = s.read(&mut buf) else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&buf[..n]);
+    head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200")
 }
 
 async fn handle_request(mut stream: tokio::net::TcpStream, token: Option<Arc<String>>) {
@@ -135,6 +178,8 @@ async fn handle_request(mut stream: tokio::net::TcpStream, token: Option<Arc<Str
     } else {
         (raw_path.to_string(), None)
     };
+
+    let query_str = raw_path.find('?').map(|i| &raw_path[i + 1..]).unwrap_or("");
 
     let is_api = path.starts_with("/api/");
 
@@ -183,6 +228,8 @@ async fn handle_request(mut stream: tokio::net::TcpStream, token: Option<Arc<Str
         }
         "/api/knowledge" => {
             let project_root = detect_project_root_for_dashboard();
+            let _ =
+                crate::core::knowledge::ProjectKnowledge::migrate_legacy_empty_root(&project_root);
             let knowledge = crate::core::knowledge::ProjectKnowledge::load_or_create(&project_root);
             let json = serde_json::to_string(&knowledge).unwrap_or_else(|_| "{}".to_string());
             ("200 OK", "application/json", json)
@@ -207,6 +254,131 @@ async fn handle_request(mut stream: tokio::net::TcpStream, token: Option<Arc<Str
             let index = crate::core::graph_index::load_or_build(&project_root);
             let entries = build_heatmap_json(&index);
             ("200 OK", "application/json", entries)
+        }
+        "/api/events" => {
+            let evs = crate::core::events::load_events_from_file(200);
+            let json = serde_json::to_string(&evs).unwrap_or_else(|_| "[]".to_string());
+            ("200 OK", "application/json", json)
+        }
+        "/api/graph" => {
+            let root = detect_project_root_for_dashboard();
+            let index = crate::core::graph_index::load_or_build(&root);
+            let json = serde_json::to_string(&index).unwrap_or_else(|_| {
+                "{\"error\":\"failed to serialize project index\"}".to_string()
+            });
+            ("200 OK", "application/json", json)
+        }
+        "/api/feedback" => {
+            let store = crate::core::feedback::FeedbackStore::load();
+            let json = serde_json::to_string(&store).unwrap_or_else(|_| {
+                "{\"error\":\"failed to serialize feedback store\"}".to_string()
+            });
+            ("200 OK", "application/json", json)
+        }
+        "/api/session" => {
+            let session = crate::core::session::SessionState::load_latest().unwrap_or_default();
+            let json = serde_json::to_string(&session)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize session\"}".to_string());
+            ("200 OK", "application/json", json)
+        }
+        "/api/search-index" => {
+            let root_s = detect_project_root_for_dashboard();
+            let root = std::path::Path::new(&root_s);
+            let index = crate::core::vector_index::BM25Index::load_or_build(root);
+            let summary = bm25_index_summary_json(&index);
+            let json = serde_json::to_string(&summary).unwrap_or_else(|_| {
+                "{\"error\":\"failed to serialize search index summary\"}".to_string()
+            });
+            ("200 OK", "application/json", json)
+        }
+        "/api/symbols" => {
+            let root = detect_project_root_for_dashboard();
+            let query = extract_query_param(query_str, "q").unwrap_or_default();
+            let kind = extract_query_param(query_str, "kind");
+            let index = crate::core::graph_index::load_or_build(&root);
+            let mut results: Vec<_> = index
+                .symbols
+                .values()
+                .filter(|s| {
+                    let name_match =
+                        query.is_empty() || s.name.to_lowercase().contains(&query.to_lowercase());
+                    let kind_match = kind
+                        .as_ref()
+                        .map(|k| s.kind.to_lowercase() == k.to_lowercase())
+                        .unwrap_or(true);
+                    name_match && kind_match
+                })
+                .collect();
+            results.sort_by(|a, b| a.name.cmp(&b.name));
+            results.truncate(100);
+            let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
+            ("200 OK", "application/json", json)
+        }
+        "/api/call-graph" => {
+            let root = detect_project_root_for_dashboard();
+            let index = crate::core::graph_index::load_or_build(&root);
+            let cg = crate::core::call_graph::CallGraph::load_or_build(&root, &index);
+            let _ = cg.save();
+            let json = serde_json::to_string(&cg).unwrap_or_else(|_| "{\"edges\":[]}".to_string());
+            ("200 OK", "application/json", json)
+        }
+        "/api/routes" => {
+            let root = detect_project_root_for_dashboard();
+            let index = crate::core::graph_index::load_or_build(&root);
+            let routes =
+                crate::core::route_extractor::extract_routes_from_project(&root, &index.files);
+            let json = serde_json::to_string(&routes).unwrap_or_else(|_| "[]".to_string());
+            ("200 OK", "application/json", json)
+        }
+        "/api/compression-demo" => {
+            let body = match extract_query_param(query_str, "path") {
+                None => r#"{"error":"missing path query parameter"}"#.to_string(),
+                Some(rel) => {
+                    let root = detect_project_root_for_dashboard();
+                    let root_pb = std::path::Path::new(&root);
+                    let candidate = std::path::Path::new(&rel);
+                    let full = if candidate.is_absolute() {
+                        candidate.to_path_buf()
+                    } else {
+                        let direct = root_pb.join(&rel);
+                        if direct.exists() {
+                            direct
+                        } else {
+                            let in_rust = root_pb.join("rust").join(&rel);
+                            if in_rust.exists() {
+                                in_rust
+                            } else {
+                                direct
+                            }
+                        }
+                    };
+                    match std::fs::read_to_string(&full) {
+                        Ok(content) => {
+                            let ext = full.extension().and_then(|e| e.to_str()).unwrap_or("rs");
+                            let path_str = full.to_string_lossy().to_string();
+                            let original_lines = content.lines().count();
+                            let original_tokens = crate::core::tokens::count_tokens(&content);
+                            let modes = compression_demo_modes_json(
+                                &content,
+                                &path_str,
+                                ext,
+                                original_tokens,
+                            );
+                            let original_preview: String = content.chars().take(8000).collect();
+                            serde_json::json!({
+                                "path": path_str,
+                                "original_lines": original_lines,
+                                "original_tokens": original_tokens,
+                                "original": original_preview,
+                                "modes": modes,
+                            })
+                            .to_string()
+                        }
+                        Err(_) => r#"{"error":"failed to read file"}"#.to_string(),
+                    }
+                }
+            };
+            ("200 OK", "application/json", body)
         }
         "/" | "/index.html" => {
             let mut html = DASHBOARD_HTML.to_string();
@@ -264,6 +436,120 @@ fn check_auth(request: &str, expected_token: &str) -> bool {
         }
     }
     false
+}
+
+fn extract_query_param(qs: &str, key: &str) -> Option<String> {
+    for pair in qs.split('&') {
+        let (k, v) = match pair.split_once('=') {
+            Some(kv) => kv,
+            None => continue,
+        };
+        if k == key {
+            return Some(percent_decode_query_component(v));
+        }
+    }
+    None
+}
+
+fn percent_decode_query_component(s: &str) -> String {
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < b.len() => {
+                let h1 = (b[i + 1] as char).to_digit(16);
+                let h2 = (b[i + 2] as char).to_digit(16);
+                if let (Some(a), Some(d)) = (h1, h2) {
+                    out.push(((a << 4) | d) as u8);
+                    i += 3;
+                } else {
+                    out.push(b'%');
+                    i += 1;
+                }
+            }
+            _ => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn compression_mode_json(output: &str, original_tokens: usize) -> serde_json::Value {
+    let tokens = crate::core::tokens::count_tokens(output);
+    let savings_pct = if original_tokens > 0 {
+        ((original_tokens.saturating_sub(tokens)) as f64 / original_tokens as f64 * 100.0).round()
+            as i64
+    } else {
+        0
+    };
+    serde_json::json!({
+        "output": output,
+        "tokens": tokens,
+        "savings_pct": savings_pct
+    })
+}
+
+fn compression_demo_modes_json(
+    content: &str,
+    path: &str,
+    ext: &str,
+    original_tokens: usize,
+) -> serde_json::Value {
+    let map_out = crate::core::signatures::extract_file_map(path, content);
+    let sig_out = crate::core::signatures::extract_signatures(content, ext)
+        .iter()
+        .map(|s| s.to_compact())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let aggressive_out = crate::core::filters::aggressive_filter(content);
+    let entropy_out = crate::core::entropy::entropy_compress_adaptive(content, path).output;
+    serde_json::json!({
+        "map": compression_mode_json(&map_out, original_tokens),
+        "signatures": compression_mode_json(&sig_out, original_tokens),
+        "aggressive": compression_mode_json(&aggressive_out, original_tokens),
+        "entropy": compression_mode_json(&entropy_out, original_tokens),
+    })
+}
+
+fn bm25_index_summary_json(index: &crate::core::vector_index::BM25Index) -> serde_json::Value {
+    let mut sorted: Vec<&crate::core::vector_index::CodeChunk> = index.chunks.iter().collect();
+    sorted.sort_by_key(|c| std::cmp::Reverse(c.token_count));
+    let top: Vec<serde_json::Value> = sorted
+        .into_iter()
+        .take(20)
+        .map(|c| {
+            serde_json::json!({
+                "file_path": c.file_path,
+                "symbol_name": c.symbol_name,
+                "token_count": c.token_count,
+                "kind": c.kind,
+                "start_line": c.start_line,
+                "end_line": c.end_line,
+            })
+        })
+        .collect();
+    let mut lang: HashMap<String, usize> = HashMap::new();
+    for c in &index.chunks {
+        let e = std::path::Path::new(&c.file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        *lang.entry(e).or_default() += 1;
+    }
+    serde_json::json!({
+        "doc_count": index.doc_count,
+        "chunk_count": index.chunks.len(),
+        "top_chunks_by_token_count": top,
+        "language_distribution": lang,
+    })
 }
 
 fn build_heatmap_json(index: &crate::core::graph_index::ProjectIndex) -> String {
@@ -356,10 +642,51 @@ fn build_agents_json() -> String {
 }
 
 fn detect_project_root_for_dashboard() -> String {
+    // Prefer last known project context from the persisted session. This makes the dashboard
+    // show the same project data even if it is launched from an arbitrary working directory.
+    if let Some(session) = crate::core::session::SessionState::load_latest() {
+        if let Some(root) = session.project_root.as_deref() {
+            if !root.trim().is_empty() {
+                return promote_to_git_root(root);
+            }
+        }
+        if let Some(cwd) = session.shell_cwd.as_deref() {
+            if !cwd.trim().is_empty() {
+                let r = crate::core::protocol::detect_project_root_or_cwd(cwd);
+                return promote_to_git_root(&r);
+            }
+        }
+        if let Some(last) = session.files_touched.last() {
+            if !last.path.trim().is_empty() {
+                if let Some(parent) = Path::new(&last.path).parent() {
+                    let p = parent.to_string_lossy().to_string();
+                    let r = crate::core::protocol::detect_project_root_or_cwd(&p);
+                    return promote_to_git_root(&r);
+                }
+            }
+        }
+    }
+
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| ".".to_string());
-    crate::core::protocol::detect_project_root_or_cwd(&cwd)
+    let r = crate::core::protocol::detect_project_root_or_cwd(&cwd);
+    promote_to_git_root(&r)
+}
+
+fn promote_to_git_root(path: &str) -> String {
+    git_root_for(path).unwrap_or_else(|| path.to_string())
+}
+
+fn git_root_for(path: &str) -> Option<String> {
+    let mut p = Path::new(path);
+    loop {
+        let git = p.join(".git");
+        if git.exists() {
+            return Some(p.to_string_lossy().to_string());
+        }
+        p = p.parent()?;
+    }
 }
 
 #[cfg(test)]

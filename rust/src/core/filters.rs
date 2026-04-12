@@ -204,6 +204,10 @@ pub fn create_example_filter() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+pub fn aggressive_filter(content: &str) -> String {
+    crate::core::compressor::aggressive_compress(content, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

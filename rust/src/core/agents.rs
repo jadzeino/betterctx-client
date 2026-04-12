@@ -115,6 +115,7 @@ impl AgentRegistry {
         });
 
         self.updated_at = Utc::now();
+        crate::core::events::emit_agent_action(&agent_id, "register", None);
         agent_id
     }
 

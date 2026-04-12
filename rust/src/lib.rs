@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod cloud_client;
 pub mod cloud_sync;
+pub mod config_io;
 pub mod core;
 pub mod dashboard;
 pub mod doctor;
@@ -17,4 +18,5 @@ pub mod shell;
 pub mod terminal_ui;
 pub mod tool_defs;
 pub mod tools;
+pub mod tui;
 pub mod uninstall;

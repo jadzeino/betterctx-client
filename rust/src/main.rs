@@ -1,7 +1,7 @@
 use anyhow::Result;
 use better_ctx::{
     cli, cloud_client, core, dashboard, doctor, heatmap, hook_handlers, mcp_stdio, report, setup,
-    shell, terminal_ui, tools, uninstall,
+    shell, terminal_ui, tools, tui, uninstall,
 };
 
 fn main() {
@@ -84,6 +84,13 @@ fn main() {
                     .find_map(|p| p.strip_prefix("--host=").or_else(|| p.strip_prefix("-H=")))
                     .map(String::from);
                 run_async(dashboard::start(port, host));
+                return;
+            }
+            "watch" => {
+                if let Err(e) = tui::run() {
+                    eprintln!("TUI error: {e}");
+                    std::process::exit(1);
+                }
                 return;
             }
             "init" => {
@@ -377,7 +384,7 @@ USAGE:
 
 COMMANDS:
     gain                           Visual dashboard (colors, bars, sparklines, USD)
-    gain --live                    Live mode: auto-refreshes every 2s in-place
+    gain --live                    Live mode: auto-refreshes every 1s in-place
     gain --graph                   30-day savings chart
     gain --daily                   Bordered day-by-day table with USD
     gain --json                    Raw JSON export of all stats

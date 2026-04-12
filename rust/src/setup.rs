@@ -1,8 +1,15 @@
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteAction {
+    Created,
+    Updated,
+    Already,
+}
+
 struct EditorTarget {
     name: &'static str,
-    agent_key: &'static str,
+    agent_key: String,
     config_path: PathBuf,
     detect_path: PathBuf,
     config_type: ConfigType,
@@ -14,6 +21,7 @@ enum ConfigType {
     Codex,
     VsCodeMcp,
     OpenCode,
+    Crush,
 }
 
 pub fn run_setup() {
@@ -54,22 +62,15 @@ pub fn run_setup() {
             continue;
         }
 
-        let has_config = target.config_path.exists()
-            && std::fs::read_to_string(&target.config_path)
-                .map(|c| c.contains("better-ctx"))
-                .unwrap_or(false);
-
-        if has_config {
-            terminal_ui::print_status_ok(&format!(
-                "{:<20} \x1b[2m{short_path}\x1b[0m",
-                target.name
-            ));
-            already_configured.push(target.name);
-            continue;
-        }
-
         match write_config(target, &binary) {
-            Ok(()) => {
+            Ok(WriteAction::Already) => {
+                terminal_ui::print_status_ok(&format!(
+                    "{:<20} \x1b[2m{short_path}\x1b[0m",
+                    target.name
+                ));
+                already_configured.push(target.name);
+            }
+            Ok(WriteAction::Created | WriteAction::Updated) => {
                 terminal_ui::print_status_new(&format!(
                     "{:<20} \x1b[2m{short_path}\x1b[0m",
                     target.name
@@ -126,7 +127,7 @@ pub fn run_setup() {
         if !target.detect_path.exists() || target.agent_key.is_empty() {
             continue;
         }
-        crate::hooks::install_agent_hook(target.agent_key, true);
+        crate::hooks::install_agent_hook(&target.agent_key, true);
     }
 
     // Step 4: Data directory + diagnostics
@@ -254,6 +255,148 @@ pub fn run_setup() {
     terminal_ui::print_command_box();
 }
 
+pub fn configure_agent_mcp(agent: &str) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+    let binary = resolve_portable_binary();
+
+    let mut targets = Vec::<EditorTarget>::new();
+
+    let push = |targets: &mut Vec<EditorTarget>,
+                name: &'static str,
+                config_path: PathBuf,
+                config_type: ConfigType| {
+        targets.push(EditorTarget {
+            name,
+            agent_key: agent.to_string(),
+            detect_path: PathBuf::from("/nonexistent"), // not used in direct agent config
+            config_path,
+            config_type,
+        });
+    };
+
+    match agent {
+        "cursor" => push(
+            &mut targets,
+            "Cursor",
+            home.join(".cursor/mcp.json"),
+            ConfigType::McpJson,
+        ),
+        "claude" | "claude-code" => push(
+            &mut targets,
+            "Claude Code",
+            home.join(".claude.json"),
+            ConfigType::McpJson,
+        ),
+        "windsurf" => push(
+            &mut targets,
+            "Windsurf",
+            home.join(".codeium/windsurf/mcp_config.json"),
+            ConfigType::McpJson,
+        ),
+        "codex" => push(
+            &mut targets,
+            "Codex CLI",
+            home.join(".codex/config.toml"),
+            ConfigType::Codex,
+        ),
+        "gemini" => {
+            push(
+                &mut targets,
+                "Gemini CLI",
+                home.join(".gemini/settings/mcp.json"),
+                ConfigType::McpJson,
+            );
+            push(
+                &mut targets,
+                "Antigravity",
+                home.join(".gemini/antigravity/mcp_config.json"),
+                ConfigType::McpJson,
+            );
+        }
+        "antigravity" => push(
+            &mut targets,
+            "Antigravity",
+            home.join(".gemini/antigravity/mcp_config.json"),
+            ConfigType::McpJson,
+        ),
+        "copilot" => push(
+            &mut targets,
+            "VS Code / Copilot",
+            vscode_mcp_path(),
+            ConfigType::VsCodeMcp,
+        ),
+        "crush" => push(
+            &mut targets,
+            "Crush",
+            home.join(".config/crush/crush.json"),
+            ConfigType::Crush,
+        ),
+        "pi" => push(
+            &mut targets,
+            "Pi Coding Agent",
+            home.join(".pi/agent/mcp.json"),
+            ConfigType::McpJson,
+        ),
+        "cline" => push(&mut targets, "Cline", cline_mcp_path(), ConfigType::McpJson),
+        "roo" => push(
+            &mut targets,
+            "Roo Code",
+            roo_mcp_path(),
+            ConfigType::McpJson,
+        ),
+        "kiro" => push(
+            &mut targets,
+            "AWS Kiro",
+            home.join(".kiro/settings/mcp.json"),
+            ConfigType::McpJson,
+        ),
+        "verdent" => push(
+            &mut targets,
+            "Verdent",
+            home.join(".verdent/mcp.json"),
+            ConfigType::McpJson,
+        ),
+        "jetbrains" => push(
+            &mut targets,
+            "JetBrains IDEs",
+            home.join(".jb-mcp.json"),
+            ConfigType::McpJson,
+        ),
+        _ => {
+            return Err(format!("Unknown agent '{agent}'"));
+        }
+    }
+
+    for t in &targets {
+        let _ = write_config(t, &binary)?;
+    }
+
+    if agent == "kiro" {
+        install_kiro_steering(&home);
+    }
+
+    Ok(())
+}
+
+fn install_kiro_steering(home: &std::path::Path) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
+    let steering_dir = cwd.join(".kiro").join("steering");
+    let steering_file = steering_dir.join("better-ctx.md");
+
+    if steering_file.exists()
+        && std::fs::read_to_string(&steering_file)
+            .unwrap_or_default()
+            .contains("better-ctx")
+    {
+        println!("  Kiro steering file already exists at .kiro/steering/better-ctx.md");
+        return;
+    }
+
+    let _ = std::fs::create_dir_all(&steering_dir);
+    let _ = std::fs::write(&steering_file, crate::hooks::KIRO_STEERING_TEMPLATE);
+    println!("  \x1b[32m✓\x1b[0m Created .kiro/steering/better-ctx.md (Kiro will now prefer better-ctx tools)");
+}
+
 fn shorten_path(path: &str, home: &str) -> String {
     if let Some(stripped) = path.strip_prefix(home) {
         format!("~{stripped}")
@@ -263,136 +406,155 @@ fn shorten_path(path: &str, home: &str) -> String {
 }
 
 fn build_targets(home: &std::path::Path, _binary: &str) -> Vec<EditorTarget> {
+    #[cfg(windows)]
+    let opencode_cfg = if let Ok(appdata) = std::env::var("APPDATA") {
+        std::path::PathBuf::from(appdata)
+            .join("opencode")
+            .join("opencode.json")
+    } else {
+        home.join(".config/opencode/opencode.json")
+    };
+    #[cfg(not(windows))]
+    let opencode_cfg = home.join(".config/opencode/opencode.json");
+
+    #[cfg(windows)]
+    let opencode_detect = opencode_cfg
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| home.join(".config/opencode"));
+    #[cfg(not(windows))]
+    let opencode_detect = home.join(".config/opencode");
+
     vec![
         EditorTarget {
             name: "Cursor",
-            agent_key: "cursor",
+            agent_key: "cursor".to_string(),
             config_path: home.join(".cursor/mcp.json"),
             detect_path: home.join(".cursor"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Claude Code",
-            agent_key: "claude",
+            agent_key: "claude".to_string(),
             config_path: home.join(".claude.json"),
             detect_path: detect_claude_path(),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Windsurf",
-            agent_key: "windsurf",
+            agent_key: "windsurf".to_string(),
             config_path: home.join(".codeium/windsurf/mcp_config.json"),
             detect_path: home.join(".codeium/windsurf"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Codex CLI",
-            agent_key: "codex",
+            agent_key: "codex".to_string(),
             config_path: home.join(".codex/config.toml"),
             detect_path: detect_codex_path(home),
             config_type: ConfigType::Codex,
         },
         EditorTarget {
             name: "Gemini CLI",
-            agent_key: "gemini",
+            agent_key: "gemini".to_string(),
             config_path: home.join(".gemini/settings/mcp.json"),
             detect_path: home.join(".gemini"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Antigravity",
-            agent_key: "gemini",
+            agent_key: "gemini".to_string(),
             config_path: home.join(".gemini/antigravity/mcp_config.json"),
             detect_path: home.join(".gemini/antigravity"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Zed",
-            agent_key: "",
+            agent_key: "".to_string(),
             config_path: zed_settings_path(home),
             detect_path: zed_config_dir(home),
             config_type: ConfigType::Zed,
         },
         EditorTarget {
             name: "VS Code / Copilot",
-            agent_key: "copilot",
+            agent_key: "copilot".to_string(),
             config_path: vscode_mcp_path(),
             detect_path: detect_vscode_path(),
             config_type: ConfigType::VsCodeMcp,
         },
         EditorTarget {
             name: "OpenCode",
-            agent_key: "",
-            config_path: home.join(".config/opencode/opencode.json"),
-            detect_path: home.join(".config/opencode"),
+            agent_key: "".to_string(),
+            config_path: opencode_cfg,
+            detect_path: opencode_detect,
             config_type: ConfigType::OpenCode,
         },
         EditorTarget {
             name: "Qwen Code",
-            agent_key: "qwen",
+            agent_key: "qwen".to_string(),
             config_path: home.join(".qwen/mcp.json"),
             detect_path: home.join(".qwen"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Trae",
-            agent_key: "trae",
+            agent_key: "trae".to_string(),
             config_path: home.join(".trae/mcp.json"),
             detect_path: home.join(".trae"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Amazon Q Developer",
-            agent_key: "amazonq",
+            agent_key: "amazonq".to_string(),
             config_path: home.join(".aws/amazonq/mcp.json"),
             detect_path: home.join(".aws/amazonq"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "JetBrains IDEs",
-            agent_key: "jetbrains",
+            agent_key: "jetbrains".to_string(),
             config_path: home.join(".jb-mcp.json"),
             detect_path: detect_jetbrains_path(home),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Cline",
-            agent_key: "cline",
+            agent_key: "cline".to_string(),
             config_path: cline_mcp_path(),
             detect_path: detect_cline_path(),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Roo Code",
-            agent_key: "roo",
+            agent_key: "roo".to_string(),
             config_path: roo_mcp_path(),
             detect_path: detect_roo_path(),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "AWS Kiro",
-            agent_key: "kiro",
+            agent_key: "kiro".to_string(),
             config_path: home.join(".kiro/settings/mcp.json"),
             detect_path: home.join(".kiro"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Verdent",
-            agent_key: "verdent",
+            agent_key: "verdent".to_string(),
             config_path: home.join(".verdent/mcp.json"),
             detect_path: home.join(".verdent"),
             config_type: ConfigType::McpJson,
         },
         EditorTarget {
             name: "Crush",
-            agent_key: "crush",
+            agent_key: "crush".to_string(),
             config_path: home.join(".config/crush/crush.json"),
             detect_path: home.join(".config/crush"),
-            config_type: ConfigType::McpJson,
+            config_type: ConfigType::Crush,
         },
         EditorTarget {
             name: "Pi Coding Agent",
-            agent_key: "pi",
+            agent_key: "pi".to_string(),
             config_path: home.join(".pi/agent/mcp.json"),
             detect_path: home.join(".pi/agent"),
             config_type: ConfigType::McpJson,
@@ -444,7 +606,7 @@ fn zed_config_dir(home: &std::path::Path) -> PathBuf {
     }
 }
 
-fn write_config(target: &EditorTarget, binary: &str) -> Result<(), String> {
+fn write_config(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
     if let Some(parent) = target.config_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -455,12 +617,16 @@ fn write_config(target: &EditorTarget, binary: &str) -> Result<(), String> {
         ConfigType::Codex => write_codex_config(target, binary),
         ConfigType::VsCodeMcp => write_vscode_mcp(target, binary),
         ConfigType::OpenCode => write_opencode_config(target, binary),
+        ConfigType::Crush => write_crush_config(target, binary),
     }
 }
 
-fn better_ctx_server_entry(binary: &str) -> serde_json::Value {
+fn better_ctx_server_entry(binary: &str, data_dir: &str) -> serde_json::Value {
     serde_json::json!({
         "command": binary,
+        "env": {
+            "BETTER_CTX_DATA_DIR": data_dir
+        },
         "autoApprove": [
             "ctx_read", "ctx_shell", "ctx_search", "ctx_tree",
             "ctx_overview", "ctx_compress", "ctx_metrics", "ctx_session",
@@ -473,148 +639,133 @@ fn better_ctx_server_entry(binary: &str) -> serde_json::Value {
     })
 }
 
-fn write_mcp_json(target: &EditorTarget, binary: &str) -> Result<(), String> {
+fn write_mcp_json(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
+    let data_dir = dirs::home_dir()
+        .ok_or_else(|| "Cannot determine home directory".to_string())?
+        .join(".better-ctx")
+        .to_string_lossy()
+        .to_string();
+    let desired = better_ctx_server_entry(binary, &data_dir);
     if target.config_path.exists() {
         let content = std::fs::read_to_string(&target.config_path).map_err(|e| e.to_string())?;
+        let mut json =
+            serde_json::from_str::<serde_json::Value>(&content).map_err(|e| e.to_string())?;
+        let obj = json
+            .as_object_mut()
+            .ok_or_else(|| "root JSON must be an object".to_string())?;
+        let servers = obj
+            .entry("mcpServers")
+            .or_insert_with(|| serde_json::json!({}));
+        let servers_obj = servers
+            .as_object_mut()
+            .ok_or_else(|| "\"mcpServers\" must be an object".to_string())?;
 
-        if content.contains("better-ctx") {
-            return Ok(());
+        let existing = servers_obj.get("better-ctx").cloned();
+        if existing.as_ref() == Some(&desired) {
+            return Ok(WriteAction::Already);
         }
-
-        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(obj) = json.as_object_mut() {
-                let servers = obj
-                    .entry("mcpServers")
-                    .or_insert_with(|| serde_json::json!({}));
-                if let Some(servers_obj) = servers.as_object_mut() {
-                    servers_obj.insert("better-ctx".to_string(), better_ctx_server_entry(binary));
-                }
-                let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
-                std::fs::write(&target.config_path, formatted).map_err(|e| e.to_string())?;
-                return Ok(());
-            }
-        }
-        return Err(format!(
-            "Could not parse existing config at {}. Please add better-ctx manually:\n\
-             Add to \"mcpServers\": \"better-ctx\": {{ \"command\": \"{}\" }}",
-            target.config_path.display(),
-            binary
-        ));
+        servers_obj.insert("better-ctx".to_string(), desired);
+        let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+        crate::config_io::write_atomic_with_backup(&target.config_path, &formatted)?;
+        return Ok(WriteAction::Updated);
     }
 
     let content = serde_json::to_string_pretty(&serde_json::json!({
         "mcpServers": {
-            "better-ctx": better_ctx_server_entry(binary)
+            "better-ctx": desired
         }
     }))
     .map_err(|e| e.to_string())?;
 
-    std::fs::write(&target.config_path, content).map_err(|e| e.to_string())
+    crate::config_io::write_atomic_with_backup(&target.config_path, &content)?;
+    Ok(WriteAction::Created)
 }
 
-fn write_zed_config(target: &EditorTarget, binary: &str) -> Result<(), String> {
+fn write_zed_config(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
+    let desired = serde_json::json!({
+        "source": "custom",
+        "command": binary,
+        "args": [],
+        "env": {}
+    });
     if target.config_path.exists() {
         let content = std::fs::read_to_string(&target.config_path).map_err(|e| e.to_string())?;
+        let mut json =
+            serde_json::from_str::<serde_json::Value>(&content).map_err(|e| e.to_string())?;
+        let obj = json
+            .as_object_mut()
+            .ok_or_else(|| "root JSON must be an object".to_string())?;
+        let servers = obj
+            .entry("context_servers")
+            .or_insert_with(|| serde_json::json!({}));
+        let servers_obj = servers
+            .as_object_mut()
+            .ok_or_else(|| "\"context_servers\" must be an object".to_string())?;
 
-        if content.contains("better-ctx") {
-            return Ok(());
+        let existing = servers_obj.get("better-ctx").cloned();
+        if existing.as_ref() == Some(&desired) {
+            return Ok(WriteAction::Already);
         }
-
-        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(obj) = json.as_object_mut() {
-                let servers = obj
-                    .entry("context_servers")
-                    .or_insert_with(|| serde_json::json!({}));
-                if let Some(servers_obj) = servers.as_object_mut() {
-                    servers_obj.insert(
-                        "better-ctx".to_string(),
-                        serde_json::json!({
-                            "source": "custom",
-                            "command": binary,
-                            "args": [],
-                            "env": {}
-                        }),
-                    );
-                }
-                let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
-                std::fs::write(&target.config_path, formatted).map_err(|e| e.to_string())?;
-                return Ok(());
-            }
-        }
-        return Err(format!(
-            "Could not parse existing config at {}. Please add better-ctx manually to \"context_servers\".",
-            target.config_path.display()
-        ));
+        servers_obj.insert("better-ctx".to_string(), desired);
+        let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+        crate::config_io::write_atomic_with_backup(&target.config_path, &formatted)?;
+        return Ok(WriteAction::Updated);
     }
 
     let content = serde_json::to_string_pretty(&serde_json::json!({
         "context_servers": {
-            "better-ctx": {
-                "source": "custom",
-                "command": binary,
-                "args": [],
-                "env": {}
-            }
+            "better-ctx": desired
         }
     }))
     .map_err(|e| e.to_string())?;
 
-    std::fs::write(&target.config_path, content).map_err(|e| e.to_string())
+    crate::config_io::write_atomic_with_backup(&target.config_path, &content)?;
+    Ok(WriteAction::Created)
 }
 
-fn write_codex_config(target: &EditorTarget, binary: &str) -> Result<(), String> {
+fn write_codex_config(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
     if target.config_path.exists() {
         let content = std::fs::read_to_string(&target.config_path).map_err(|e| e.to_string())?;
-
-        if content.contains("better-ctx") {
-            return Ok(());
+        let updated = upsert_codex_toml(&content, binary);
+        if updated == content {
+            return Ok(WriteAction::Already);
         }
-
-        let mut new_content = content.clone();
-        if !new_content.ends_with('\n') {
-            new_content.push('\n');
-        }
-        new_content.push_str(&format!(
-            "\n[mcp_servers.better-ctx]\ncommand = \"{}\"\nargs = []\n",
-            binary
-        ));
-        std::fs::write(&target.config_path, new_content).map_err(|e| e.to_string())?;
-        return Ok(());
+        crate::config_io::write_atomic_with_backup(&target.config_path, &updated)?;
+        return Ok(WriteAction::Updated);
     }
 
     let content = format!(
         "[mcp_servers.better-ctx]\ncommand = \"{}\"\nargs = []\n",
         binary
     );
-    std::fs::write(&target.config_path, content).map_err(|e| e.to_string())
+    crate::config_io::write_atomic_with_backup(&target.config_path, &content)?;
+    Ok(WriteAction::Created)
 }
 
-fn write_vscode_mcp(target: &EditorTarget, binary: &str) -> Result<(), String> {
+fn write_vscode_mcp(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
+    let desired = serde_json::json!({ "command": binary, "args": [] });
     if target.config_path.exists() {
         let content = std::fs::read_to_string(&target.config_path).map_err(|e| e.to_string())?;
-        if content.contains("better-ctx") {
-            return Ok(());
+        let mut json =
+            serde_json::from_str::<serde_json::Value>(&content).map_err(|e| e.to_string())?;
+        let obj = json
+            .as_object_mut()
+            .ok_or_else(|| "root JSON must be an object".to_string())?;
+        let servers = obj
+            .entry("servers")
+            .or_insert_with(|| serde_json::json!({}));
+        let servers_obj = servers
+            .as_object_mut()
+            .ok_or_else(|| "\"servers\" must be an object".to_string())?;
+
+        let existing = servers_obj.get("better-ctx").cloned();
+        if existing.as_ref() == Some(&desired) {
+            return Ok(WriteAction::Already);
         }
-        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(obj) = json.as_object_mut() {
-                let servers = obj
-                    .entry("servers")
-                    .or_insert_with(|| serde_json::json!({}));
-                if let Some(servers_obj) = servers.as_object_mut() {
-                    servers_obj.insert(
-                        "better-ctx".to_string(),
-                        serde_json::json!({ "command": binary, "args": [] }),
-                    );
-                }
-                let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
-                std::fs::write(&target.config_path, formatted).map_err(|e| e.to_string())?;
-                return Ok(());
-            }
-        }
-        return Err(format!(
-            "Could not parse existing config at {}. Please add better-ctx manually to \"servers\".",
-            target.config_path.display()
-        ));
+        servers_obj.insert("better-ctx".to_string(), desired);
+        let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+        crate::config_io::write_atomic_with_backup(&target.config_path, &formatted)?;
+        return Ok(WriteAction::Updated);
     }
 
     if let Some(parent) = target.config_path.parent() {
@@ -631,39 +782,35 @@ fn write_vscode_mcp(target: &EditorTarget, binary: &str) -> Result<(), String> {
     }))
     .map_err(|e| e.to_string())?;
 
-    std::fs::write(&target.config_path, content).map_err(|e| e.to_string())
+    crate::config_io::write_atomic_with_backup(&target.config_path, &content)?;
+    Ok(WriteAction::Created)
 }
 
-fn write_opencode_config(target: &EditorTarget, binary: &str) -> Result<(), String> {
+fn write_opencode_config(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
+    let desired = serde_json::json!({
+        "type": "local",
+        "command": [binary],
+        "enabled": true
+    });
     if target.config_path.exists() {
         let content = std::fs::read_to_string(&target.config_path).map_err(|e| e.to_string())?;
-        if content.contains("better-ctx") {
-            return Ok(());
+        let mut json =
+            serde_json::from_str::<serde_json::Value>(&content).map_err(|e| e.to_string())?;
+        let obj = json
+            .as_object_mut()
+            .ok_or_else(|| "root JSON must be an object".to_string())?;
+        let mcp = obj.entry("mcp").or_insert_with(|| serde_json::json!({}));
+        let mcp_obj = mcp
+            .as_object_mut()
+            .ok_or_else(|| "\"mcp\" must be an object".to_string())?;
+        let existing = mcp_obj.get("better-ctx").cloned();
+        if existing.as_ref() == Some(&desired) {
+            return Ok(WriteAction::Already);
         }
-        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(obj) = json.as_object_mut() {
-                let mcp = obj.entry("mcp").or_insert_with(|| serde_json::json!({}));
-                if let Some(mcp_obj) = mcp.as_object_mut() {
-                    mcp_obj.insert(
-                        "better-ctx".to_string(),
-                        serde_json::json!({
-                            "type": "local",
-                            "command": [binary],
-                            "enabled": true
-                        }),
-                    );
-                }
-                let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
-                std::fs::write(&target.config_path, formatted).map_err(|e| e.to_string())?;
-                return Ok(());
-            }
-        }
-        return Err(format!(
-            "Could not parse existing config at {}. Please add better-ctx manually:\n\
-             Add to the \"mcp\" section: \"better-ctx\": {{ \"type\": \"local\", \"command\": [\"{}\"], \"enabled\": true }}",
-            target.config_path.display(),
-            binary
-        ));
+        mcp_obj.insert("better-ctx".to_string(), desired);
+        let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+        crate::config_io::write_atomic_with_backup(&target.config_path, &formatted)?;
+        return Ok(WriteAction::Updated);
     }
 
     if let Some(parent) = target.config_path.parent() {
@@ -682,7 +829,192 @@ fn write_opencode_config(target: &EditorTarget, binary: &str) -> Result<(), Stri
     }))
     .map_err(|e| e.to_string())?;
 
-    std::fs::write(&target.config_path, content).map_err(|e| e.to_string())
+    crate::config_io::write_atomic_with_backup(&target.config_path, &content)?;
+    Ok(WriteAction::Created)
+}
+
+fn write_crush_config(target: &EditorTarget, binary: &str) -> Result<WriteAction, String> {
+    let desired = serde_json::json!({ "type": "stdio", "command": binary });
+    if target.config_path.exists() {
+        let content = std::fs::read_to_string(&target.config_path).map_err(|e| e.to_string())?;
+        let mut json =
+            serde_json::from_str::<serde_json::Value>(&content).map_err(|e| e.to_string())?;
+        let obj = json
+            .as_object_mut()
+            .ok_or_else(|| "root JSON must be an object".to_string())?;
+        let mcp = obj.entry("mcp").or_insert_with(|| serde_json::json!({}));
+        let mcp_obj = mcp
+            .as_object_mut()
+            .ok_or_else(|| "\"mcp\" must be an object".to_string())?;
+
+        let existing = mcp_obj.get("better-ctx").cloned();
+        if existing.as_ref() == Some(&desired) {
+            return Ok(WriteAction::Already);
+        }
+        mcp_obj.insert("better-ctx".to_string(), desired);
+        let formatted = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+        crate::config_io::write_atomic_with_backup(&target.config_path, &formatted)?;
+        return Ok(WriteAction::Updated);
+    }
+
+    let content = serde_json::to_string_pretty(&serde_json::json!({
+        "mcp": { "better-ctx": desired }
+    }))
+    .map_err(|e| e.to_string())?;
+
+    crate::config_io::write_atomic_with_backup(&target.config_path, &content)?;
+    Ok(WriteAction::Created)
+}
+
+fn upsert_codex_toml(existing: &str, binary: &str) -> String {
+    let mut out = String::with_capacity(existing.len() + 128);
+    let mut in_section = false;
+    let mut saw_section = false;
+    let mut wrote_command = false;
+    let mut wrote_args = false;
+
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_section && !wrote_command {
+                out.push_str(&format!("command = \"{}\"\n", binary));
+                wrote_command = true;
+            }
+            if in_section && !wrote_args {
+                out.push_str("args = []\n");
+                wrote_args = true;
+            }
+            in_section = trimmed == "[mcp_servers.better-ctx]";
+            if in_section {
+                saw_section = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        if in_section {
+            if trimmed.starts_with("command") && trimmed.contains('=') {
+                out.push_str(&format!("command = \"{}\"\n", binary));
+                wrote_command = true;
+                continue;
+            }
+            if trimmed.starts_with("args") && trimmed.contains('=') {
+                out.push_str("args = []\n");
+                wrote_args = true;
+                continue;
+            }
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if saw_section {
+        if in_section && !wrote_command {
+            out.push_str(&format!("command = \"{}\"\n", binary));
+        }
+        if in_section && !wrote_args {
+            out.push_str("args = []\n");
+        }
+        return out;
+    }
+
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n[mcp_servers.better-ctx]\n");
+    out.push_str(&format!("command = \"{}\"\n", binary));
+    out.push_str("args = []\n");
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(path: PathBuf, ty: ConfigType) -> EditorTarget {
+        EditorTarget {
+            name: "test",
+            agent_key: "test".to_string(),
+            config_path: path,
+            detect_path: PathBuf::from("/nonexistent"),
+            config_type: ty,
+        }
+    }
+
+    #[test]
+    fn mcp_json_upserts_and_preserves_other_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{ "mcpServers": { "other": { "command": "other-bin" }, "better-ctx": { "command": "/old/path/better-ctx", "autoApprove": [] } } }"#,
+        )
+        .unwrap();
+
+        let t = target(path.clone(), ConfigType::McpJson);
+        let action = write_mcp_json(&t, "/new/path/better-ctx").unwrap();
+        assert_eq!(action, WriteAction::Updated);
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["mcpServers"]["other"]["command"], "other-bin");
+        assert_eq!(
+            json["mcpServers"]["better-ctx"]["command"],
+            "/new/path/better-ctx"
+        );
+        assert!(json["mcpServers"]["better-ctx"]["autoApprove"].is_array());
+        assert!(
+            json["mcpServers"]["better-ctx"]["autoApprove"]
+                .as_array()
+                .unwrap()
+                .len()
+                > 5
+        );
+    }
+
+    #[test]
+    fn crush_config_writes_mcp_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crush.json");
+        std::fs::write(
+            &path,
+            r#"{ "mcp": { "better-ctx": { "type": "stdio", "command": "old" } } }"#,
+        )
+        .unwrap();
+
+        let t = target(path.clone(), ConfigType::Crush);
+        let action = write_crush_config(&t, "new").unwrap();
+        assert_eq!(action, WriteAction::Updated);
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["mcp"]["better-ctx"]["type"], "stdio");
+        assert_eq!(json["mcp"]["better-ctx"]["command"], "new");
+    }
+
+    #[test]
+    fn codex_toml_upserts_existing_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[mcp_servers.better-ctx]
+command = "old"
+args = ["x"]
+"#,
+        )
+        .unwrap();
+
+        let t = target(path.clone(), ConfigType::Codex);
+        let action = write_codex_config(&t, "new").unwrap();
+        assert_eq!(action, WriteAction::Updated);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains(r#"command = "new""#));
+        assert!(content.contains("args = []"));
+    }
 }
 
 fn detect_vscode_path() -> PathBuf {

@@ -158,6 +158,28 @@ pub fn extract_signatures(content: &str, file_ext: &str) -> Vec<Signature> {
     }
 }
 
+pub fn extract_file_map(path: &str, content: &str) -> String {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("rs");
+    let dep_info = super::deps::extract_deps(content, ext);
+    let sigs = extract_signatures(content, ext);
+    let mut parts = Vec::new();
+    if !dep_info.imports.is_empty() {
+        parts.push(dep_info.imports.join(","));
+    }
+    let key_sigs: Vec<String> = sigs
+        .iter()
+        .filter(|s| s.is_exported || s.indent == 0)
+        .map(|s| s.to_compact())
+        .collect();
+    if !key_sigs.is_empty() {
+        parts.push(key_sigs.join("\n"));
+    }
+    parts.join("\n")
+}
+
 fn extract_ts_signatures(content: &str) -> Vec<Signature> {
     let mut sigs = Vec::new();
 

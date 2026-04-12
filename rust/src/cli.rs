@@ -888,6 +888,9 @@ pub fn cmd_init(args: &[String]) {
     if !agents.is_empty() {
         for agent_name in &agents {
             crate::hooks::install_agent_hook(agent_name, global);
+            if let Err(e) = crate::setup::configure_agent_mcp(agent_name) {
+                eprintln!("MCP config for '{agent_name}' not updated: {e}");
+            }
         }
         if !global {
             crate::hooks::install_project_rules();
