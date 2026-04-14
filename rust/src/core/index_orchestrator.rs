@@ -5,9 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::core::call_graph::CallGraph;
 use crate::core::graph_index::{self, ProjectIndex};
-use crate::core::route_extractor::RouteEntry;
 use crate::core::vector_index::BM25Index;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +42,6 @@ struct ProjectBuild {
     worker_running: bool,
     graph: Component,
     bm25: Component,
-    call_graph: Component,
-    routes: Component,
 }
 
 impl ProjectBuild {
@@ -54,8 +50,6 @@ impl ProjectBuild {
             worker_running: false,
             graph: Component::new(),
             bm25: Component::new(),
-            call_graph: Component::new(),
-            routes: Component::new(),
         }
     }
 }
@@ -103,10 +97,6 @@ fn finish_err(c: &mut Component, e: String) {
     c.last_error = Some(e);
 }
 
-fn routes_cache_path(project_root: &str) -> Option<std::path::PathBuf> {
-    ProjectIndex::index_dir(project_root).map(|d| d.join("routes.json"))
-}
-
 pub fn ensure_all_background(project_root: &str) {
     let state = entry_for(project_root);
     let should_spawn = {
@@ -127,8 +117,6 @@ pub fn ensure_all_background(project_root: &str) {
     std::thread::spawn(move || {
         let state = entry_for(&root);
 
-        let mut index: Option<ProjectIndex> = None;
-
         {
             let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
             start_component(&mut s.graph);
@@ -139,8 +127,7 @@ pub fn ensure_all_background(project_root: &str) {
             idx
         });
         match idx {
-            Ok(i) => {
-                index = Some(i);
+            Ok(_i) => {
                 let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
                 finish_ok(&mut s.graph);
             }
@@ -170,74 +157,6 @@ pub fn ensure_all_background(project_root: &str) {
             }
         }
 
-        let idx = match index {
-            Some(i) => i,
-            None => {
-                // If graph index failed above, try to load it (maybe it still exists).
-                match ProjectIndex::load(&root).filter(|i| !i.files.is_empty()) {
-                    Some(i) => i,
-                    None => {
-                        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                        finish_err(
-                            &mut s.call_graph,
-                            "call graph skipped: graph index missing".to_string(),
-                        );
-                        finish_err(
-                            &mut s.routes,
-                            "routes skipped: graph index missing".to_string(),
-                        );
-                        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                        s.worker_running = false;
-                        return;
-                    }
-                }
-            }
-        };
-
-        {
-            let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-            start_component(&mut s.call_graph);
-        }
-        let cg = std::panic::catch_unwind(|| {
-            let graph = CallGraph::load_or_build(&root, &idx);
-            let _ = graph.save();
-        });
-        match cg {
-            Ok(()) => {
-                let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                finish_ok(&mut s.call_graph);
-            }
-            Err(_) => {
-                let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                finish_err(&mut s.call_graph, "call graph build panicked".to_string());
-            }
-        }
-
-        {
-            let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-            start_component(&mut s.routes);
-        }
-        let rt = std::panic::catch_unwind(|| {
-            let routes =
-                crate::core::route_extractor::extract_routes_from_project(&root, &idx.files);
-            if let Some(path) = routes_cache_path(&root) {
-                let _ = std::fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")));
-                if let Ok(json) = serde_json::to_string(&routes) {
-                    let _ = std::fs::write(path, json);
-                }
-            }
-        });
-        match rt {
-            Ok(()) => {
-                let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                finish_ok(&mut s.routes);
-            }
-            Err(_) => {
-                let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-                finish_err(&mut s.routes, "routes build panicked".to_string());
-            }
-        }
-
         let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.worker_running = false;
     });
@@ -249,16 +168,6 @@ pub fn try_load_graph_index(project_root: &str) -> Option<ProjectIndex> {
 
 pub fn try_load_bm25_index(project_root: &str) -> Option<BM25Index> {
     BM25Index::load(Path::new(project_root))
-}
-
-pub fn try_load_call_graph(project_root: &str) -> Option<CallGraph> {
-    CallGraph::load(project_root)
-}
-
-pub fn try_load_routes(project_root: &str) -> Option<Vec<RouteEntry>> {
-    let path = routes_cache_path(project_root)?;
-    let content = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&content).ok()
 }
 
 #[derive(Debug, Serialize)]
@@ -290,8 +199,6 @@ struct StatusResponse<'a> {
     project_root: &'a str,
     graph_index: ComponentStatus<'a>,
     bm25_index: ComponentStatus<'a>,
-    call_graph: ComponentStatus<'a>,
-    routes: ComponentStatus<'a>,
 }
 
 pub fn status_json(project_root: &str) -> String {
@@ -301,8 +208,6 @@ pub fn status_json(project_root: &str) -> String {
         project_root,
         graph_index: component_status(&s.graph),
         bm25_index: component_status(&s.bm25),
-        call_graph: component_status(&s.call_graph),
-        routes: component_status(&s.routes),
     };
     serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string())
 }

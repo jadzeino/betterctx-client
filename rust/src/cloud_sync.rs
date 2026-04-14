@@ -30,28 +30,27 @@ pub fn cloud_background_tasks() {
         }
     }
 
-    if crate::cloud_client::check_pro() {
+    if crate::cloud_client::is_logged_in() {
         if !already_synced {
-            let stats_data = crate::core::stats::format_gain_json();
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stats_data) {
-                let entry = serde_json::json!({
-                    "date": &today,
-                    "tokens_original": parsed["total_original_tokens"].as_i64().unwrap_or(0),
-                    "tokens_compressed": parsed["total_compressed_tokens"].as_i64().unwrap_or(0),
-                    "tokens_saved": parsed["total_saved_tokens"].as_i64().unwrap_or(0),
-                    "tool_calls": parsed["total_calls"].as_i64().unwrap_or(0),
-                    "cache_hits": parsed["cache_hits"].as_i64().unwrap_or(0),
-                    "cache_misses": parsed["cache_misses"].as_i64().unwrap_or(0),
-                });
-                if crate::cloud_client::sync_stats(&[entry]).is_ok() {
-                    config.cloud.last_sync = Some(today.clone());
-                }
+            let store = crate::core::stats::load();
+            let cep = &store.cep;
+            let entry = serde_json::json!({
+                "date": &today,
+                "tokens_original": cep.total_tokens_original,
+                "tokens_compressed": cep.total_tokens_compressed,
+                "tokens_saved": cep.total_tokens_original.saturating_sub(cep.total_tokens_compressed),
+                "tool_calls": store.total_commands,
+                "cache_hits": cep.total_cache_hits,
+                "cache_misses": cep.total_cache_reads.saturating_sub(cep.total_cache_hits),
+            });
+            if crate::cloud_client::sync_stats(&[entry]).is_ok() {
+                config.cloud.last_sync = Some(today.clone());
             }
         }
 
         if !already_pulled {
-            if let Ok(data) = crate::cloud_client::pull_pro_models() {
-                let _ = crate::cloud_client::save_pro_models(&data);
+            if let Ok(data) = crate::cloud_client::pull_cloud_models() {
+                let _ = crate::cloud_client::save_cloud_models(&data);
                 config.cloud.last_model_pull = Some(today.clone());
             }
         }

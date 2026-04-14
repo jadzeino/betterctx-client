@@ -695,7 +695,8 @@ fn extract_cd_target(command: &str, base_cwd: &str) -> Option<String> {
         Some(target.to_string())
     } else {
         let base = std::path::Path::new(base_cwd);
-        Some(base.join(target).to_string_lossy().to_string())
+        let joined = base.join(target).to_string_lossy().to_string();
+        Some(joined.replace('\\', "/"))
     }
 }
 
@@ -721,11 +722,7 @@ mod tests {
     #[test]
     fn extract_cd_relative_path() {
         let result = extract_cd_target("cd subdir", "/home/user");
-        let expected = std::path::Path::new("/home/user")
-            .join("subdir")
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(result, Some(expected));
+        assert_eq!(result, Some("/home/user/subdir".to_string()));
     }
 
     #[test]
@@ -743,11 +740,7 @@ mod tests {
     #[test]
     fn extract_cd_parent_dir() {
         let result = extract_cd_target("cd ..", "/home/user/project");
-        let expected = std::path::Path::new("/home/user/project")
-            .join("..")
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(result, Some(expected));
+        assert_eq!(result, Some("/home/user/project/..".to_string()));
     }
 
     #[test]

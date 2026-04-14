@@ -8,7 +8,6 @@ fn backup_path_for(path: &Path) -> Option<PathBuf> {
 pub fn write_atomic_with_backup(path: &Path, content: &str) -> Result<(), String> {
     if path.exists() {
         if let Some(bak) = backup_path_for(path) {
-            // Best-effort backup; if it fails we still attempt the write.
             let _ = std::fs::copy(path, &bak);
         }
     }
@@ -38,7 +37,6 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     let tmp = parent.join(format!(".{filename}.better-ctx.tmp.{pid}.{nanos}"));
     std::fs::write(&tmp, content).map_err(|e| e.to_string())?;
 
-    // On Windows, rename fails if destination exists.
     #[cfg(windows)]
     {
         if path.exists() {

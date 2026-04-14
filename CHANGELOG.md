@@ -3,6 +3,54 @@
 All notable changes to better-ctx are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.1.0] — 2026-04-14
+
+### betterCTX Cloud — Web Dashboard & Full Data Sync
+
+#### Added — Cloud Dashboard
+
+- **Web Observatory** — full-featured cloud dashboard at `betterctx.com/dashboard` mirroring the local Observatory. Includes Overview, Daily Stats, Commands, Performance (CEP), Knowledge, Gotchas, Adaptive Models, Buddy, and Settings views.
+- **Login & Registration** — email/password authentication with email verification, password reset via magic link, and dedicated login/register pages.
+- **SPA Navigation** — client-side routing with `history.pushState` for each dashboard view with dedicated URLs (`/dashboard/stats`, `/dashboard/knowledge`, etc.).
+- **Timeframe Filters** — 7d/30d/90d/All time filters on Overview and Stats pages with live chart updates.
+- **Knowledge Table** — searchable, filterable knowledge entries with category badges, confidence stars, and proper table layout with horizontal scroll on mobile.
+
+#### Added — Complete Data Sync
+
+- **Buddy Sync** — full `BuddyState` (ASCII art, animation frames, RPG stats, rarity, mood, speech) synced as JSON to the cloud and rendered with live animation on the dashboard.
+- **Feedback Thresholds Sync** — learned compression thresholds per language synced to the cloud via new `/api/sync/feedback` endpoint and displayed on the Performance page.
+- **Gotchas Sync** — both universal and per-project gotchas (`~/.better-ctx/knowledge/*/gotchas.json`) are merged and synced.
+- **CEP Cache Metrics** — daily `cache_hits` and `cache_misses` derived from CEP session data for accurate historical stats (previously hardcoded to 0).
+- **Command Stats** — per-command token savings with source type (MCP/Hook) breakdown.
+
+#### Added — Cloud Server
+
+- **REST API** — Axum-based API server with endpoints for stats, commands, CEP scores, knowledge, gotchas, buddy state, feedback thresholds, and adaptive models.
+- **PostgreSQL Schema** — tables for users, api_keys, email_verifications, password_resets, stats_daily, knowledge_entries, command_stats, cep_scores, gotchas, buddy_state, feedback_thresholds.
+- **Email Verification** — SHA256-token-based email verification flow with configurable SMTP.
+- **Password Reset** — secure token-based password reset with expiry.
+
+#### Improved
+
+- **Cost Model alignment** — cloud dashboard now uses the same `computeCost()` formula as the local dashboard (input $2.50/M + estimated output $10/M with 450→120 tokens/call reduction), replacing the previous input-only calculation.
+- **Adaptive Models explanation** — expanded Models page with "What Adaptive Models Do For You" (before/after comparison), "How Models Are Built" (4-step flow), and "Compression Modes" reference table.
+- **Daily Stats accuracy** — hit rate and cache data now correctly display from CEP-enriched daily stats.
+- **Dashboard icons** — all SVG icons render with correct dimensions via explicit CSS utility classes.
+- **Stats bar color** — Original tokens bar changed to blue for better visibility against the green Saved bar.
+
+#### Removed
+
+- **Teams & Leaderboard** — removed team creation, invites, and leaderboard features in favor of utility-focused dashboard.
+- **File Watcher** — removed unused `watcher.rs` module.
+
+#### Security
+
+- **rand crate** — updated to `>= 0.9.3` to fix unsoundness with custom loggers (GHSA low severity).
+
+#### Fixed
+
+- **Token count test threshold** — updated `bench_system_instructions_token_count` thresholds to accommodate cloud server feature additions.
+
 ## [3.0.3] — 2026-04-12
 
 ### Dashboard Reliability + Automatic Background Indexing

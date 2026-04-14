@@ -291,45 +291,6 @@ async fn handle_request(mut stream: tokio::net::TcpStream, token: Option<Arc<Str
             });
             ("200 OK", "application/json", json)
         }
-        "/api/symbols" => {
-            let root = detect_project_root_for_dashboard();
-            let query = extract_query_param(query_str, "q").unwrap_or_default();
-            let kind = extract_query_param(query_str, "kind");
-            let index = crate::core::graph_index::load_or_build(&root);
-            let mut results: Vec<_> = index
-                .symbols
-                .values()
-                .filter(|s| {
-                    let name_match =
-                        query.is_empty() || s.name.to_lowercase().contains(&query.to_lowercase());
-                    let kind_match = kind
-                        .as_ref()
-                        .map(|k| s.kind.to_lowercase() == k.to_lowercase())
-                        .unwrap_or(true);
-                    name_match && kind_match
-                })
-                .collect();
-            results.sort_by(|a, b| a.name.cmp(&b.name));
-            results.truncate(100);
-            let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
-            ("200 OK", "application/json", json)
-        }
-        "/api/call-graph" => {
-            let root = detect_project_root_for_dashboard();
-            let index = crate::core::graph_index::load_or_build(&root);
-            let cg = crate::core::call_graph::CallGraph::load_or_build(&root, &index);
-            let _ = cg.save();
-            let json = serde_json::to_string(&cg).unwrap_or_else(|_| "{\"edges\":[]}".to_string());
-            ("200 OK", "application/json", json)
-        }
-        "/api/routes" => {
-            let root = detect_project_root_for_dashboard();
-            let index = crate::core::graph_index::load_or_build(&root);
-            let routes =
-                crate::core::route_extractor::extract_routes_from_project(&root, &index.files);
-            let json = serde_json::to_string(&routes).unwrap_or_else(|_| "[]".to_string());
-            ("200 OK", "application/json", json)
-        }
         "/api/compression-demo" => {
             let body = match extract_query_param(query_str, "path") {
                 None => r#"{"error":"missing path query parameter"}"#.to_string(),

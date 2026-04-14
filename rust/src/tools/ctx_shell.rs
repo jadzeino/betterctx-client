@@ -109,41 +109,31 @@ fn has_file_write_redirect(command: &str) -> bool {
     false
 }
 
-/// Normalize command separators for the detected Windows shell.
-///
-/// - cmd.exe (`/C`): `;` is invalid → convert to `&&`
-/// - PowerShell 5.x (`-Command`): `&&` is invalid → convert to `;`
-/// - POSIX / PS7+ via Git Bash (`-c`): no changes needed
+/// On Windows cmd.exe, `;` is not a valid command separator.
+/// Convert `cmd1; cmd2` to `cmd1 && cmd2` when running under cmd.exe.
 pub fn normalize_command_for_shell(command: &str) -> String {
     if !cfg!(windows) {
         return command.to_string();
     }
     let (_, flag) = crate::shell::shell_and_flag();
-    match flag.as_str() {
-        "/C" => replace_unquoted(command, b";", b" && "),
-        "-Command" => replace_unquoted(command, b"&&", b"; "),
-        _ => command.to_string(),
+    if flag != "/C" {
+        return command.to_string();
     }
-}
-
-fn replace_unquoted(command: &str, needle: &[u8], replacement: &[u8]) -> String {
     let bytes = command.as_bytes();
     let mut result = Vec::with_capacity(bytes.len() + 16);
     let mut in_single = false;
     let mut in_double = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\'' && !in_double {
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\'' && !in_double {
             in_single = !in_single;
-        } else if bytes[i] == b'"' && !in_single {
+        } else if b == b'"' && !in_single {
             in_double = !in_double;
-        } else if !in_single && !in_double && bytes[i..].starts_with(needle) {
-            result.extend_from_slice(replacement);
-            i += needle.len();
+        } else if b == b';' && !in_single && !in_double {
+            result.extend_from_slice(b" && ");
             continue;
         }
-        result.push(bytes[i]);
-        i += 1;
+        result.push(b);
+        let _ = i;
     }
     String::from_utf8(result).unwrap_or_else(|_| command.to_string())
 }
@@ -323,34 +313,6 @@ mod tests {
         assert_eq!(
             normalize_command_for_shell("cd /tmp; ls -la"),
             "cd /tmp; ls -la"
-        );
-    }
-
-    #[test]
-    fn replace_unquoted_semicolons_to_ampersand() {
-        assert_eq!(
-            replace_unquoted("cd /tmp; ls -la", b";", b" && "),
-            "cd /tmp &&  ls -la"
-        );
-    }
-
-    #[test]
-    fn replace_unquoted_ampersand_to_semicolons() {
-        assert_eq!(
-            replace_unquoted("cd backend && git status", b"&&", b"; "),
-            "cd backend ;  git status"
-        );
-    }
-
-    #[test]
-    fn replace_unquoted_preserves_quoted_strings() {
-        assert_eq!(
-            replace_unquoted(r#"echo "a && b" && ls"#, b"&&", b"; "),
-            r#"echo "a && b" ;  ls"#
-        );
-        assert_eq!(
-            replace_unquoted("echo 'a; b'; ls", b";", b" && "),
-            "echo 'a; b' &&  ls"
         );
     }
 

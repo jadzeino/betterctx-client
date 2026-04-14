@@ -107,6 +107,14 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:1
   background:var(--surface-2);padding:2px 6px;border-radius:4px;border:1px solid var(--border);
 }
 
+.tf-bar{display:flex;gap:4px;margin-bottom:12px}
+.tf-btn{
+  padding:5px 14px;font-size:11px;font-weight:500;border-radius:8px;
+  border:1px solid var(--border);background:none;color:var(--muted);
+  cursor:pointer;font-family:var(--font);transition:all .15s;
+}
+.tf-btn:hover{border-color:var(--border-light);color:var(--text)}
+.tf-btn.active{border-color:var(--green-glow);background:var(--green-dim);color:var(--green)}
 .hero{display:grid;grid-template-columns:1.8fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px}
 .hero-main{
   position:relative;border-radius:var(--r);padding:32px 28px;overflow:hidden;
@@ -540,6 +548,7 @@ let charts = {};
 let overviewBuilt = false;
 let overviewRaw = null;
 let overviewCR = 0;
+let overviewTF = 0;
 let overviewShowAll = false;
 let overviewPH = '';
 let liveInterval = null;
@@ -702,8 +711,20 @@ async function loadOverview() {
   }
 }
 
+function setOverviewTF(days) {
+  overviewTF = days;
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.tf) === days));
+  if (overviewRaw) { overviewPH = ''; updateOverview(overviewRaw); }
+}
+
 function buildOverview(container) {
   container.innerHTML = `
+    <div class="tf-bar">
+      <button class="tf-btn${overviewTF===7?' active':''}" data-tf="7" onclick="setOverviewTF(7)">7d</button>
+      <button class="tf-btn${overviewTF===30?' active':''}" data-tf="30" onclick="setOverviewTF(30)">30d</button>
+      <button class="tf-btn${overviewTF===90?' active':''}" data-tf="90" onclick="setOverviewTF(90)">90d</button>
+      <button class="tf-btn${overviewTF===0?' active':''}" data-tf="0" onclick="setOverviewTF(0)">All</button>
+    </div>
     <div class="hero">
       <div class="hero-main">
         <div class="hv" data-live id="vSaved"></div>
@@ -770,11 +791,24 @@ function buildOverview(container) {
   overviewBuilt = true;
 }
 
+function filterDailyByDays(daily, days) {
+  if (!days) return daily;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutStr = cutoff.toISOString().slice(0, 10);
+  return daily.filter(d => d.date >= cutStr);
+}
+
 function updateOverview(d) {
-  const daily = fd(d.daily || [], overviewCR);
-  const iSv = d.total_input_tokens - d.total_output_tokens;
-  const co = gc(d.total_input_tokens, d.total_output_tokens, d.total_commands);
-  const rate = pc(iSv, d.total_input_tokens);
+  const allDaily = d.daily || [];
+  const daily = overviewTF ? filterDailyByDays(allDaily, overviewTF) : fd(allDaily, overviewCR);
+
+  const tfInp = daily.reduce((a, x) => a + (x.input_tokens || 0), 0);
+  const tfOut = daily.reduce((a, x) => a + (x.output_tokens || 0), 0);
+  const tfCmds = daily.reduce((a, x) => a + (x.commands || 0), 0);
+  const iSv = tfInp - tfOut;
+  const co = gc(tfInp, tfOut, tfCmds);
+  const rate = pc(iSv, tfInp);
   const cmds = Object.entries(d.commands || {});
   cmds.sort((a,b) => (b[1].input_tokens-b[1].output_tokens) - (a[1].input_tokens-a[1].output_tokens));
   const sp = ss(cmds);
@@ -782,8 +816,8 @@ function updateOverview(d) {
 
   lv('vSaved', fmt(iSv)); lv('vSavedIn', ff(iSv)); lv('vSavedOut', '~'+fmt(co.os));
   lv('vCost', fu(co.sv)); lv('vCostSub', 'input '+fu(co.iW-co.iC)+' \u00B7 output '+fu(co.oW-co.oC));
-  lv('vRate', rate+'%'); lv('vRateSub', fmt(d.total_input_tokens)+' \u2192 '+fmt(d.total_output_tokens));
-  lv('vCalls', ff(d.total_commands)); lv('vCallsSub', daily.length+' days \u00B7 since '+fu1);
+  lv('vRate', rate+'%'); lv('vRateSub', fmt(tfInp)+' \u2192 '+fmt(tfOut));
+  lv('vCalls', ff(tfCmds)); lv('vCallsSub', daily.length+' days \u00B7 since '+fu1);
   lv('vCW', fu(co.tW)); lv('vCC', fu(co.tC));
   lv('vIS', fu(co.iW-co.iC)); lv('vOS', fu(co.oW-co.oC)); lv('vOT', fmt(co.os));
   lv('vMC', ff(sp.m.c)); lv('vMS', fmt(sp.m.s)); lv('vMR', pc(sp.m.s,sp.m.i)+'%');

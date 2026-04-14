@@ -1,6 +1,6 @@
 [package]
 name = "better-ctx"
-version = "3.0.3"
+version = "3.1.0"
 edition = "2021"
 description = "Context Intelligence Engine with CCP. 34 MCP tools, 8 read modes, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge with temporal facts + contradiction detection, multi-agent context sharing + diaries, LITM-aware positioning, AAAK compact format, adaptive compression with Thompson Sampling bandits. Supports 24 AI tools. Reduces LLM token consumption by up to 99%."
 license = "MIT"
@@ -19,10 +19,27 @@ path = "src/lib.rs"
 name = "better-ctx"
 path = "src/main.rs"
 
+[[bin]]
+name = "better-ctx-cloud-api"
+path = "src/cloud_server_main.rs"
+required-features = ["cloud-server"]
+
 [features]
 default = ["tree-sitter", "embeddings"]
 neural = ["dep:rten", "dep:rten-tensor"]
 embeddings = ["dep:rten", "dep:rten-tensor"]
+cloud-server = [
+  "dep:axum",
+  "dep:tower-http",
+  "dep:deadpool-postgres",
+  "dep:tokio-postgres",
+  "dep:lettre",
+  "dep:jsonwebtoken",
+  "dep:uuid",
+  "dep:hex",
+  "dep:sha2",
+  "dep:rand",
+]
 tree-sitter = [
   "dep:tree-sitter",
   "dep:tree-sitter-rust",
@@ -91,6 +108,16 @@ tree-sitter-zig = { version = "1.1", optional = true }
 tree-sitter-dart = { version = "0.1", optional = true }
 rten = { version = "0.24", optional = true }
 rten-tensor = { version = "0.24", optional = true }
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+deadpool-postgres = { version = "0.14", optional = true }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"], optional = true }
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"], optional = true }
+jsonwebtoken = { version = "10.3", optional = true }
+uuid = { version = "1", features = ["v4", "serde"], optional = true }
+hex = { version = "0.4", optional = true }
+sha2 = { version = "0.10", optional = true }
+rand = { version = "0.9.3", optional = true }
 glob = "0.3.3"
 ratatui = "0.30"
 crossterm = "0.28"

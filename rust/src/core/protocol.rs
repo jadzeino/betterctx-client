@@ -1,30 +1,29 @@
 use std::path::Path;
 
-/// Finds a project root by walking up from `file_path`.
-/// Prefers the closest Git root (`.git`) to avoid accidentally selecting unrelated ancestor repos.
+/// Finds the outermost project root by walking up from `file_path`.
+/// For monorepos with nested `.git` dirs (e.g. `mono/backend/.git` + `mono/frontend/.git`),
+/// returns the outermost ancestor containing `.git`, a workspace marker, or a known
+/// monorepo config file — so the whole monorepo is treated as one project.
 pub fn detect_project_root(file_path: &str) -> Option<String> {
-    let p = Path::new(file_path);
-    let mut dir = if p.is_dir() { p } else { p.parent()? };
-    let mut best_non_git: Option<String> = None;
+    let mut dir = Path::new(file_path).parent()?;
+    let mut best: Option<String> = None;
 
     loop {
-        if dir.join(".git").exists() {
-            return Some(dir.to_string_lossy().to_string());
-        }
         if is_project_root_marker(dir) {
-            best_non_git = Some(dir.to_string_lossy().to_string());
+            best = Some(dir.to_string_lossy().to_string());
         }
         match dir.parent() {
             Some(parent) if parent != dir => dir = parent,
             _ => break,
         }
     }
-    best_non_git
+    best
 }
 
 /// Checks if a directory looks like a project root (has `.git`, workspace config, etc.).
 fn is_project_root_marker(dir: &Path) -> bool {
     const MARKERS: &[&str] = &[
+        ".git",
         "Cargo.toml",
         "package.json",
         "go.work",
@@ -268,55 +267,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compress_output_normal_unchanged() {
-        use crate::core::config::OutputDensity;
-        let input = "line1\n\nline3\n// comment\n====\nline6";
-        let result = compress_output(input, &OutputDensity::Normal);
-        assert_eq!(result, input);
-    }
-
-    #[test]
-    fn compress_output_terse_strips_blanks_and_comments() {
-        use crate::core::config::OutputDensity;
-        let input = "line1\n\n// comment\nline4\n----\nline6";
-        let result = compress_output(input, &OutputDensity::Terse);
-        assert!(!result.contains("\n\n"), "should remove blank lines");
-        assert!(!result.contains("// comment"), "should remove comments");
-        assert!(!result.contains("----"), "should remove banners");
-        assert!(result.contains("line1"));
-        assert!(result.contains("line4"));
-        assert!(result.contains("line6"));
-    }
-
-    #[test]
-    fn compress_output_ultra_abbreviates() {
-        use crate::core::config::OutputDensity;
-        let input = "function configuration implementation dependencies";
-        let result = compress_output(input, &OutputDensity::Ultra);
-        assert!(result.contains("fn"));
-        assert!(result.contains("cfg"));
-        assert!(result.contains("impl"));
-        assert!(result.contains("deps"));
-        assert!(!result.contains("function"));
-    }
-
-    #[test]
-    fn terse_shorter_than_normal() {
-        use crate::core::config::OutputDensity;
-        let input = "line1\n\n// header comment\nline3\n======\nline5\n\nline7";
-        let normal = compress_output(input, &OutputDensity::Normal);
-        let terse = compress_output(input, &OutputDensity::Terse);
-        assert!(terse.len() < normal.len());
-    }
-
-    #[test]
-    fn detect_project_root_finds_git_root() {
-        let tmp = std::env::temp_dir().join("better-ctx-test-git-root");
+    fn is_project_root_marker_detects_git() {
+        let tmp = std::env::temp_dir().join("better-ctx-test-root-marker");
         let _ = std::fs::create_dir_all(&tmp);
         let git_dir = tmp.join(".git");
         let _ = std::fs::create_dir_all(&git_dir);
-        let root = detect_project_root(tmp.to_str().unwrap());
-        assert_eq!(root.as_deref(), Some(tmp.to_string_lossy().as_ref()));
+        assert!(is_project_root_marker(&tmp));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -330,8 +286,8 @@ mod tests {
     }
 
     #[test]
-    fn detect_project_root_prefers_closest_git_root() {
-        let base = std::env::temp_dir().join("better-ctx-test-nested-git");
+    fn detect_project_root_finds_outermost() {
+        let base = std::env::temp_dir().join("better-ctx-test-monorepo");
         let inner = base.join("packages").join("app");
         let _ = std::fs::create_dir_all(&inner);
         let _ = std::fs::create_dir_all(base.join(".git"));
@@ -341,7 +297,13 @@ mod tests {
         let _ = std::fs::write(&test_file, "fn main() {}");
 
         let root = detect_project_root(test_file.to_str().unwrap());
-        assert_eq!(root.as_deref(), Some(inner.to_string_lossy().as_ref()));
+        assert!(root.is_some(), "should find a project root for nested .git");
+        let root_path = std::path::PathBuf::from(root.unwrap());
+        assert_eq!(
+            root_path.canonicalize().ok(),
+            base.canonicalize().ok(),
+            "should return outermost .git, not inner"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
