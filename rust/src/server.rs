@@ -134,7 +134,36 @@ impl ServerHandler for LeanCtxServer {
                 })
                 .unwrap_or_default();
             let mut detector = self.loop_detector.write().await;
-            detector.record_call(name, &fp)
+
+            let is_search = crate::core::loop_detection::LoopDetector::is_search_tool(name);
+            let is_search_shell = name == "ctx_shell" && {
+                let cmd = args
+                    .as_ref()
+                    .and_then(|a| a.get("command"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                crate::core::loop_detection::LoopDetector::is_search_shell_command(cmd)
+            };
+
+            if is_search || is_search_shell {
+                let search_pattern = args.as_ref().and_then(|a| {
+                    a.get("pattern")
+                        .or_else(|| a.get("query"))
+                        .and_then(|v| v.as_str())
+                });
+                let shell_pattern = if is_search_shell {
+                    args.as_ref()
+                        .and_then(|a| a.get("command"))
+                        .and_then(|v| v.as_str())
+                        .and_then(extract_search_pattern_from_command)
+                } else {
+                    None
+                };
+                let pat = search_pattern.or(shell_pattern.as_deref());
+                detector.record_search(name, &fp, pat)
+            } else {
+                detector.record_call(name, &fp)
+            }
         };
 
         if throttle_result.level == crate::core::loop_detection::ThrottleLevel::Blocked {
@@ -1342,6 +1371,40 @@ fn get_int(args: &Option<serde_json::Map<String, Value>>, key: &str) -> Option<i
 
 fn get_bool(args: &Option<serde_json::Map<String, Value>>, key: &str) -> Option<bool> {
     args.as_ref()?.get(key)?.as_bool()
+}
+
+fn extract_search_pattern_from_command(command: &str) -> Option<String> {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let cmd = parts[0];
+    if cmd == "grep" || cmd == "rg" || cmd == "ag" || cmd == "ack" {
+        for (i, part) in parts.iter().enumerate().skip(1) {
+            if !part.starts_with('-') {
+                return Some(part.to_string());
+            }
+            if (*part == "-e" || *part == "--regexp" || *part == "-m") && i + 1 < parts.len() {
+                return Some(parts[i + 1].to_string());
+            }
+        }
+    }
+    if cmd == "find" || cmd == "fd" {
+        for (i, part) in parts.iter().enumerate() {
+            if (*part == "-name" || *part == "-iname") && i + 1 < parts.len() {
+                return Some(
+                    parts[i + 1]
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .to_string(),
+                );
+            }
+        }
+        if cmd == "fd" && parts.len() >= 2 && !parts[1].starts_with('-') {
+            return Some(parts[1].to_string());
+        }
+    }
+    None
 }
 
 fn execute_command_in(command: &str, cwd: &str) -> (String, i32) {

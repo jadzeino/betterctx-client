@@ -88,9 +88,9 @@ Semantic: ctx_semantic_search finds similar code by meaning — use when exact s
 Focus on: ctx_read, ctx_shell, ctx_search, ctx_tree. Use ctx_session for memory, ctx_knowledge for project facts.\n\
 Knowledge: ctx_knowledge actions: remember, recall, timeline, rooms, search (cross-session), wakeup. Facts have temporal validity + contradiction detection.\n\
 Agent diary: ctx_agent(action=diary, category=discovery|decision|blocker|progress|insight) to log agent work. ctx_agent(action=recall_diary) to review.\n\
-ctx_shell raw=true: skip compression for small/critical outputs. Full output tee files at ~/.better-ctx/tee/.\n\
+ctx_shell raw=true: uncompressed for small/critical output.\n\
 \n\
-Auto-checkpoint every 15 calls. Cache clears after 5 min idle.\n\
+Auto-checkpoint every 15 calls.\n\
 \n\
 CEP v1: 1.ACT FIRST 2.DELTA ONLY (Fn refs) 3.STRUCTURED (+/-/~) 4.ONE LINE PER ACTION 5.QUALITY ANCHOR\n\
 \n\

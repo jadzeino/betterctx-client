@@ -274,7 +274,7 @@ fn shell_aliases_outcome() -> Outcome {
 
 struct McpLocation {
     name: &'static str,
-    display: &'static str,
+    display: String,
     path: PathBuf,
 }
 
@@ -282,17 +282,17 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
     let mut locations = vec![
         McpLocation {
             name: "Cursor",
-            display: "~/.cursor/mcp.json",
+            display: "~/.cursor/mcp.json".into(),
             path: home.join(".cursor").join("mcp.json"),
         },
         McpLocation {
             name: "Claude Code",
-            display: "~/.claude.json",
-            path: home.join(".claude.json"),
+            display: format!("{}", crate::setup::claude_config_json_path(home).display()),
+            path: crate::setup::claude_config_json_path(home),
         },
         McpLocation {
             name: "Windsurf",
-            display: "~/.codeium/windsurf/mcp_config.json",
+            display: "~/.codeium/windsurf/mcp_config.json".into(),
             path: home
                 .join(".codeium")
                 .join("windsurf")
@@ -300,17 +300,17 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
         },
         McpLocation {
             name: "Codex",
-            display: "~/.codex/config.toml",
+            display: "~/.codex/config.toml".into(),
             path: home.join(".codex").join("config.toml"),
         },
         McpLocation {
             name: "Gemini CLI",
-            display: "~/.gemini/settings/mcp.json",
+            display: "~/.gemini/settings/mcp.json".into(),
             path: home.join(".gemini").join("settings").join("mcp.json"),
         },
         McpLocation {
             name: "Antigravity",
-            display: "~/.gemini/antigravity/mcp_config.json",
+            display: "~/.gemini/antigravity/mcp_config.json".into(),
             path: home
                 .join(".gemini")
                 .join("antigravity")
@@ -323,44 +323,44 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
         let zed_cfg = home.join(".config").join("zed").join("settings.json");
         locations.push(McpLocation {
             name: "Zed",
-            display: "~/.config/zed/settings.json",
+            display: "~/.config/zed/settings.json".into(),
             path: zed_cfg,
         });
     }
 
     locations.push(McpLocation {
         name: "Qwen Code",
-        display: "~/.qwen/mcp.json",
+        display: "~/.qwen/mcp.json".into(),
         path: home.join(".qwen").join("mcp.json"),
     });
     locations.push(McpLocation {
         name: "Trae",
-        display: "~/.trae/mcp.json",
+        display: "~/.trae/mcp.json".into(),
         path: home.join(".trae").join("mcp.json"),
     });
     locations.push(McpLocation {
         name: "Amazon Q",
-        display: "~/.aws/amazonq/mcp.json",
+        display: "~/.aws/amazonq/mcp.json".into(),
         path: home.join(".aws").join("amazonq").join("mcp.json"),
     });
     locations.push(McpLocation {
         name: "JetBrains",
-        display: "~/.jb-mcp.json",
+        display: "~/.jb-mcp.json".into(),
         path: home.join(".jb-mcp.json"),
     });
     locations.push(McpLocation {
         name: "AWS Kiro",
-        display: "~/.kiro/settings/mcp.json",
+        display: "~/.kiro/settings/mcp.json".into(),
         path: home.join(".kiro").join("settings").join("mcp.json"),
     });
     locations.push(McpLocation {
         name: "Verdent",
-        display: "~/.verdent/mcp.json",
+        display: "~/.verdent/mcp.json".into(),
         path: home.join(".verdent").join("mcp.json"),
     });
     locations.push(McpLocation {
         name: "Crush",
-        display: "~/.config/crush/crush.json",
+        display: "~/.config/crush/crush.json".into(),
         path: home.join(".config").join("crush").join("crush.json"),
     });
 
@@ -383,7 +383,7 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
 
         locations.push(McpLocation {
             name: "OpenCode",
-            display: opencode_display,
+            display: opencode_display.into(),
             path: opencode_cfg,
         });
     }
@@ -393,7 +393,7 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
         let vscode_mcp = home.join("Library/Application Support/Code/User/mcp.json");
         locations.push(McpLocation {
             name: "VS Code / Copilot",
-            display: "~/Library/Application Support/Code/User/mcp.json",
+            display: "~/Library/Application Support/Code/User/mcp.json".into(),
             path: vscode_mcp,
         });
     }
@@ -402,7 +402,7 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
         let vscode_mcp = home.join(".config/Code/User/mcp.json");
         locations.push(McpLocation {
             name: "VS Code / Copilot",
-            display: "~/.config/Code/User/mcp.json",
+            display: "~/.config/Code/User/mcp.json".into(),
             path: vscode_mcp,
         });
     }
@@ -412,7 +412,7 @@ fn mcp_config_locations(home: &std::path::Path) -> Vec<McpLocation> {
             let vscode_mcp = std::path::PathBuf::from(appdata).join("Code/User/mcp.json");
             locations.push(McpLocation {
                 name: "VS Code / Copilot",
-                display: "%APPDATA%/Code/User/mcp.json",
+                display: "%APPDATA%/Code/User/mcp.json".into(),
                 path: vscode_mcp,
             });
         }
@@ -560,6 +560,65 @@ fn session_state_outcome() -> Outcome {
             ),
         },
     }
+}
+
+fn docker_env_outcomes() -> Vec<Outcome> {
+    if !crate::shell::is_container() {
+        return vec![];
+    }
+    let env_sh = dirs::home_dir()
+        .map(|h| {
+            h.join(".better-ctx")
+                .join("env.sh")
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_else(|| "/root/.better-ctx/env.sh".to_string());
+
+    let mut outcomes = vec![];
+
+    let shell_name = std::env::var("SHELL").unwrap_or_default();
+    let is_bash = shell_name.contains("bash") || shell_name.is_empty();
+
+    if is_bash {
+        let has_bash_env = std::env::var("BASH_ENV").is_ok();
+        outcomes.push(if has_bash_env {
+            Outcome {
+                ok: true,
+                line: format!(
+                    "{BOLD}BASH_ENV{RST}  {GREEN}set{RST}  {DIM}({}){RST}",
+                    std::env::var("BASH_ENV").unwrap_or_default()
+                ),
+            }
+        } else {
+            Outcome {
+                ok: false,
+                line: format!(
+                    "{BOLD}BASH_ENV{RST}  {RED}not set{RST}  {YELLOW}(add to Dockerfile: ENV BASH_ENV=\"{env_sh}\"){RST}"
+                ),
+            }
+        });
+    }
+
+    let has_claude_env = std::env::var("CLAUDE_ENV_FILE").is_ok();
+    outcomes.push(if has_claude_env {
+        Outcome {
+            ok: true,
+            line: format!(
+                "{BOLD}CLAUDE_ENV_FILE{RST}  {GREEN}set{RST}  {DIM}({}){RST}",
+                std::env::var("CLAUDE_ENV_FILE").unwrap_or_default()
+            ),
+        }
+    } else {
+        Outcome {
+            ok: false,
+            line: format!(
+                "{BOLD}CLAUDE_ENV_FILE{RST}  {RED}not set{RST}  {YELLOW}(for Claude Code: ENV CLAUDE_ENV_FILE=\"{env_sh}\"){RST}"
+            ),
+        }
+    });
+
+    outcomes
 }
 
 /// Run diagnostic checks and print colored results to stdout.
@@ -735,7 +794,16 @@ pub fn run() {
     }
     print_check(&session_outcome);
 
-    // 10) Pi Coding Agent (optional)
+    // 10) Docker env vars (optional, only in containers)
+    let docker_outcomes = docker_env_outcomes();
+    for docker_check in &docker_outcomes {
+        if docker_check.ok {
+            passed += 1;
+        }
+        print_check(docker_check);
+    }
+
+    // 11) Pi Coding Agent (optional)
     let pi = pi_outcome();
     if let Some(ref pi_check) = pi {
         if pi_check.ok {
@@ -744,7 +812,11 @@ pub fn run() {
         print_check(pi_check);
     }
 
-    let effective_total = if pi.is_some() { total + 2 } else { total + 1 };
+    let mut effective_total = total + 1; // session_state always shown
+    effective_total += docker_outcomes.len() as u32;
+    if pi.is_some() {
+        effective_total += 1;
+    }
     println!();
     println!("  {BOLD}{WHITE}Summary:{RST}  {GREEN}{passed}{RST}{DIM}/{effective_total}{RST} checks passed");
     println!("  {DIM}This binary: better-ctx {VERSION} (Cargo package version){RST}");
@@ -779,9 +851,7 @@ pub fn run_compact() {
     let status = if passed == total {
         format!("{GREEN}✓ All {total} checks passed{RST}")
     } else {
-        format!(
-            "{YELLOW}{passed}/{total} passed{RST} — run {BOLD}better-ctx doctor{RST} for details"
-        )
+        format!("{YELLOW}{passed}/{total} passed{RST} — run {BOLD}better-ctx doctor{RST} for details")
     };
     println!("  {status}");
 }

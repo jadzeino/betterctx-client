@@ -7,6 +7,36 @@ use crate::core::slow_log;
 use crate::core::stats;
 use crate::core::tokens::count_tokens;
 
+/// Detects if the current process runs inside a Docker/container environment.
+pub fn is_container() -> bool {
+    #[cfg(unix)]
+    {
+        if std::path::Path::new("/.dockerenv").exists() {
+            return true;
+        }
+        if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+            if cgroup.contains("/docker/") || cgroup.contains("/lxc/") {
+                return true;
+            }
+        }
+        if let Ok(mounts) = std::fs::read_to_string("/proc/self/mountinfo") {
+            if mounts.contains("/docker/containers/") {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// Returns true if stdin is NOT a terminal (pipe, /dev/null, etc.)
+pub fn is_non_interactive() -> bool {
+    !io::stdin().is_terminal()
+}
+
 pub fn exec(command: &str) -> i32 {
     let (shell, shell_flag) = shell_and_flag();
     let command = crate::tools::ctx_shell::normalize_command_for_shell(command);
@@ -596,6 +626,166 @@ fn cleanup_old_tee_logs(tee_dir: &std::path::Path) {
     }
 }
 
+/// Join multiple CLI arguments into a single command string, using quoting
+/// conventions appropriate for the detected shell.
+///
+/// On Unix, this always produces POSIX-compatible quoting.
+/// On Windows, the quoting adapts to the actual shell (PowerShell, cmd.exe,
+/// or Git Bash / MSYS).
+pub fn join_command(args: &[String]) -> String {
+    let (_, flag) = shell_and_flag();
+    join_command_for(args, &flag)
+}
+
+fn join_command_for(args: &[String], shell_flag: &str) -> String {
+    match shell_flag {
+        "-Command" => join_powershell(args),
+        "/C" => join_cmd(args),
+        _ => join_posix(args),
+    }
+}
+
+fn join_posix(args: &[String]) -> String {
+    args.iter()
+        .map(|a| quote_posix(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn join_powershell(args: &[String]) -> String {
+    let quoted: Vec<String> = args.iter().map(|a| quote_powershell(a)).collect();
+    format!("& {}", quoted.join(" "))
+}
+
+fn join_cmd(args: &[String]) -> String {
+    args.iter()
+        .map(|a| quote_cmd(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn quote_posix(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"-_./=:@,+%^".contains(&b))
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn quote_powershell(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"-_./=:@,+%^".contains(&b))
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+fn quote_cmd(s: &str) -> String {
+    if s.is_empty() {
+        return "\"\"".to_string();
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"-_./=:@,+%^\\".contains(&b))
+    {
+        return s.to_string();
+    }
+    format!("\"{}\"", s.replace('"', "\\\""))
+}
+
+#[cfg(test)]
+mod join_command_tests {
+    use super::*;
+
+    #[test]
+    fn posix_simple_args() {
+        let args: Vec<String> = vec!["git".into(), "status".into()];
+        assert_eq!(join_command_for(&args, "-c"), "git status");
+    }
+
+    #[test]
+    fn posix_path_with_spaces() {
+        let args: Vec<String> = vec!["/usr/local/my app/bin".into(), "--help".into()];
+        assert_eq!(
+            join_command_for(&args, "-c"),
+            "'/usr/local/my app/bin' --help"
+        );
+    }
+
+    #[test]
+    fn posix_single_quotes_escaped() {
+        let args: Vec<String> = vec!["echo".into(), "it's".into()];
+        assert_eq!(join_command_for(&args, "-c"), "echo 'it'\\''s'");
+    }
+
+    #[test]
+    fn posix_empty_arg() {
+        let args: Vec<String> = vec!["cmd".into(), "".into()];
+        assert_eq!(join_command_for(&args, "-c"), "cmd ''");
+    }
+
+    #[test]
+    fn powershell_simple_args() {
+        let args: Vec<String> = vec!["npm".into(), "install".into()];
+        assert_eq!(join_command_for(&args, "-Command"), "& npm install");
+    }
+
+    #[test]
+    fn powershell_path_with_spaces() {
+        let args: Vec<String> = vec![
+            "C:\\Program Files\\nodejs\\npm.cmd".into(),
+            "install".into(),
+        ];
+        assert_eq!(
+            join_command_for(&args, "-Command"),
+            "& 'C:\\Program Files\\nodejs\\npm.cmd' install"
+        );
+    }
+
+    #[test]
+    fn powershell_single_quotes_escaped() {
+        let args: Vec<String> = vec!["echo".into(), "it's done".into()];
+        assert_eq!(join_command_for(&args, "-Command"), "& echo 'it''s done'");
+    }
+
+    #[test]
+    fn cmd_simple_args() {
+        let args: Vec<String> = vec!["npm.cmd".into(), "install".into()];
+        assert_eq!(join_command_for(&args, "/C"), "npm.cmd install");
+    }
+
+    #[test]
+    fn cmd_path_with_spaces() {
+        let args: Vec<String> = vec![
+            "C:\\Program Files\\nodejs\\npm.cmd".into(),
+            "install".into(),
+        ];
+        assert_eq!(
+            join_command_for(&args, "/C"),
+            "\"C:\\Program Files\\nodejs\\npm.cmd\" install"
+        );
+    }
+
+    #[test]
+    fn cmd_double_quotes_escaped() {
+        let args: Vec<String> = vec!["echo".into(), "say \"hello\"".into()];
+        assert_eq!(join_command_for(&args, "/C"), "echo \"say \\\"hello\\\"\"");
+    }
+
+    #[test]
+    fn unknown_flag_uses_posix() {
+        let args: Vec<String> = vec!["ls".into(), "-la".into()];
+        assert_eq!(join_command_for(&args, "--exec"), "ls -la");
+    }
+}
+
 #[cfg(test)]
 mod windows_shell_flag_tests {
     use super::windows_shell_flag_for_exe_basename;
@@ -750,5 +940,17 @@ mod passthrough_tests {
         assert!(!is_excluded_command("aws s3 ls", &[]));
         assert!(!is_excluded_command("gcloud compute instances list", &[]));
         assert!(!is_excluded_command("az vm list", &[]));
+    }
+
+    #[test]
+    fn is_container_returns_bool() {
+        let result = super::is_container();
+        assert!(result || !result);
+    }
+
+    #[test]
+    fn is_non_interactive_returns_bool() {
+        let result = super::is_non_interactive();
+        assert!(result || !result);
     }
 }

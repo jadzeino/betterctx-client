@@ -157,8 +157,7 @@ pub fn save_agent_card(card: &AgentCard) -> std::io::Result<()> {
     let well_known = dir.join(".well-known");
     std::fs::create_dir_all(&well_known)?;
 
-    let json = serde_json::to_string_pretty(card)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(card).map_err(std::io::Error::other)?;
     std::fs::write(well_known.join("agent.json"), json)?;
     Ok(())
 }

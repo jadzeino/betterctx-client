@@ -8,6 +8,7 @@ mod db;
 mod feedback;
 mod global_stats;
 mod gotchas;
+mod helpers;
 mod knowledge;
 mod models;
 mod stats;

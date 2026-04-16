@@ -1,6 +1,6 @@
 # better-ctx
 
-**Context Intelligence Engine with CCP + TDD. Shell Hook + MCP Server. 25 MCP tools, 90+ shell patterns, cross-session memory (CCP), LITM-aware positioning, tree-sitter AST for 18 languages. Single Rust binary.**
+**Context Runtime for AI Agents with CCP + TDD. Shell Hook + MCP Server. 42 MCP tools, 10 read modes, 90+ shell patterns, cross-session memory (CCP), LITM-aware positioning, tree-sitter AST for 18 languages. Single Rust binary.**
 
 [![CI](https://github.com/jadzeino/betterctx-client/actions/workflows/ci.yml/badge.svg)](https://github.com/jadzeino/betterctx-client/actions/workflows/ci.yml)
 [![Security Check](https://github.com/jadzeino/betterctx-client/actions/workflows/security-check.yml/badge.svg)](https://github.com/jadzeino/betterctx-client/actions/workflows/security-check.yml)
@@ -10,15 +10,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/betterctx)
 
-[Website](https://betterctx.com) · [Install](#installation) · [Quick Start](#quick-start) · [CLI Reference](#cli-commands) · [MCP Tools](#25-mcp-tools) · [Changelog](CHANGELOG.md) · [vs RTK](#better-ctx-vs-rtk) · [Discord](https://discord.gg/betterctx)
+[Website](https://betterctx.com) · [Install](#installation) · [Quick Start](#quick-start) · [CLI Reference](#cli-commands) · [MCP Tools](#42-mcp-tools) · [Changelog](CHANGELOG.md) · [vs RTK](#better-ctx-vs-rtk) · [Discord](https://discord.gg/betterctx)
 
 ---
 
 better-ctx reduces LLM token consumption by **up to 99%** through two complementary strategies in a single binary:
 
 1. **Shell Hook** — Transparently compresses CLI output (90+ patterns) before it reaches the LLM. Works without LLM cooperation.
-2. **MCP Server** — 25 tools for cached file reads, adaptive mode selection, incremental deltas, dependency maps, intent detection, cross-file dedup, project graph, cross-session memory (CCP), and session metrics. Works with Cursor, GitHub Copilot, Claude Code, Windsurf, OpenAI Codex, Google Antigravity, OpenCode, and any MCP-compatible editor.
-3. **AI Tool Hooks** — One-command integration for Claude Code, Cursor, Gemini CLI, Codex, Windsurf, and Cline via `better-ctx init --agent <tool>`.
+2. **MCP Server** — 42 tools for cached file reads, adaptive mode selection, incremental deltas, dependency maps, intent detection, cross-file dedup, project graph, cross-session memory (CCP), multi-agent coordination, semantic caching, and session metrics. Works with Cursor, GitHub Copilot, Claude Code, Windsurf, OpenAI Codex, Google Antigravity, OpenCode, and any MCP-compatible editor.
+3. **AI Tool Hooks** — One-command integration for Claude Code, Cursor, Gemini CLI, Codex, Crush, Windsurf, and Cline via `better-ctx init --agent <tool>`.
 
 ## Token Savings (Typical Cursor/Claude Code Session)
 
@@ -185,6 +185,7 @@ better-ctx init --agent gemini   # Install Gemini CLI BeforeTool hook
 better-ctx init --agent codex    # Install Codex AGENTS.md
 better-ctx init --agent windsurf # Install .windsurfrules
 better-ctx init --agent cline    # Install .clinerules
+better-ctx init --agent crush    # Install Crush MCP config
 better-ctx gain                  # Persistent token savings (CLI)
 better-ctx gain --graph          # ASCII chart of last 30 days
 better-ctx gain --daily          # Day-by-day breakdown
@@ -346,9 +347,9 @@ $ better-ctx gain
   better-ctx v2.1.1  |  betterctx.com  |  better-ctx dashboard
 ```
 
-## 25 MCP Tools
+## 42 MCP Tools
 
-When configured as an MCP server, better-ctx provides 25 tools that replace or augment your editor's built-in tools:
+When configured as an MCP server, better-ctx provides 42 tools that replace or augment your editor's built-in tools:
 
 ### Core Tools
 
@@ -374,12 +375,19 @@ When configured as an MCP server, better-ctx provides 25 tools that replace or a
 | `ctx_context` | Multi-turn session overview — tracks what the LLM already knows |
 | `ctx_graph` | Project intelligence graph — dependency analysis and related file discovery |
 | `ctx_discover` | Shell history analysis — finds missed compression opportunities |
+| `ctx_edit` | Search-and-replace file editing — works without native Read/Edit tools |
+| `ctx_overview` | Task-relevant project map — use at session start |
+| `ctx_preload` | Proactive context loader — caches task-relevant files, returns compact summary |
+| `ctx_semantic_search` | BM25 code search by meaning — finds symbols and patterns across the project |
 
-### Session Continuity Tools (new in v2.0.0)
+### Memory & Multi-Agent Tools
 
 | Tool | Purpose |
 |---|---|
 | `ctx_session` | Cross-session memory — persist task, findings, decisions, files across chats and context compactions |
+| `ctx_knowledge` | Persistent project knowledge — remember facts, recall by query/category |
+| `ctx_agent` | Multi-agent coordination — register, post/read scratchpad, handoff tasks, sync status |
+| `ctx_share` | Multi-agent context sharing — push/pull cached file contexts between agents |
 | `ctx_wrapped` | Shareable savings report — "Spotify Wrapped" for your token savings |
 
 ### Analysis Tools

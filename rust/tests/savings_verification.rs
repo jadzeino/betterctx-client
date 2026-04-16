@@ -454,8 +454,8 @@ fn audit_full_savings_pipeline() {
 
         assert!(is_cache_hit, "second read should be a cache hit");
         assert!(
-            output2_tokens < 50,
-            "cache hit stub should be <50 tokens, got {output2_tokens}"
+            output2_tokens < 40,
+            "cache hit stub should be <40 tokens, got {output2_tokens}"
         );
 
         let _ = std::fs::remove_file(&tmp);

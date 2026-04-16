@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::auth::{auth_user, AppState};
+use super::helpers::internal_error;
 
 #[derive(Deserialize)]
 pub struct KnowledgeEnvelope {
@@ -101,8 +102,4 @@ DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
         .await
         .map_err(internal_error)?;
     Ok(())
-}
-
-fn internal_error<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }

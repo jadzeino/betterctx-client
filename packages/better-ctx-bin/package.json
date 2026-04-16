@@ -1,6 +1,6 @@
 {
   "name": "better-ctx-bin",
-  "version": "3.1.0",
+  "version": "3.1.5",
   "description": "better-ctx — the token-efficient context tool for LLM coding agents. Installs a pre-built binary, no Rust required.",
   "keywords": ["better-ctx", "mcp", "llm", "context", "claude", "cursor", "ai", "token-optimization"],
   "homepage": "https://betterctx.com",

@@ -4,6 +4,7 @@ use axum::Json;
 use serde::Serialize;
 
 use super::auth::AppState;
+use super::helpers::internal_error;
 
 #[derive(Serialize)]
 pub struct GlobalStatsResponse {
@@ -51,8 +52,4 @@ pub async fn get_global_stats(
         total_contributions,
         total_teams,
     }))
-}
-
-fn internal_error<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }

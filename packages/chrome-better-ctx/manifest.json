@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "description": "Compress code context before pasting into AI chat tools. Reduces token consumption by up to 99%.",
   "permissions": [
+    "activeTab",
     "storage",
-    "nativeMessaging"
+    "nativeMessaging",
+    "clipboardRead"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",

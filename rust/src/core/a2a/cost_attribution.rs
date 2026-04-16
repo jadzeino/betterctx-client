@@ -83,14 +83,15 @@ impl CostStore {
         let now = Utc::now().to_rfc3339();
         let cost = estimate_cost(input_tokens, output_tokens, 0);
 
-        let agent = self.agents.entry(agent_id.to_string()).or_insert_with(|| {
-            AgentCost {
+        let agent = self
+            .agents
+            .entry(agent_id.to_string())
+            .or_insert_with(|| AgentCost {
                 agent_id: agent_id.to_string(),
                 agent_type: agent_type.to_string(),
                 first_seen: Some(now.clone()),
                 ..Default::default()
-            }
-        });
+            });
         agent.total_input_tokens += input_tokens;
         agent.total_output_tokens += output_tokens;
         agent.total_calls += 1;
@@ -98,12 +99,13 @@ impl CostStore {
         agent.last_seen = Some(now.clone());
         *agent.tools_used.entry(tool_name.to_string()).or_insert(0) += 1;
 
-        let tool = self.tools.entry(tool_name.to_string()).or_insert_with(|| {
-            ToolCost {
+        let tool = self
+            .tools
+            .entry(tool_name.to_string())
+            .or_insert_with(|| ToolCost {
                 tool_name: tool_name.to_string(),
                 ..Default::default()
-            }
-        });
+            });
         tool.total_input_tokens += input_tokens;
         tool.total_output_tokens += output_tokens;
         tool.total_calls += 1;
@@ -125,14 +127,22 @@ impl CostStore {
 
     pub fn top_agents(&self, limit: usize) -> Vec<&AgentCost> {
         let mut agents: Vec<_> = self.agents.values().collect();
-        agents.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        agents.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         agents.truncate(limit);
         agents
     }
 
     pub fn top_tools(&self, limit: usize) -> Vec<&ToolCost> {
         let mut tools: Vec<_> = self.tools.values().collect();
-        tools.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        tools.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         tools.truncate(limit);
         tools
     }
@@ -202,8 +212,7 @@ fn save_to_disk(store: &CostStore) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let json = serde_json::to_string(store)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string(store).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, &json)?;
     std::fs::rename(&tmp, &path)?;

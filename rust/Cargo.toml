@@ -1,8 +1,8 @@
 [package]
 name = "better-ctx"
-version = "3.1.0"
+version = "3.1.5"
 edition = "2021"
-description = "Context Intelligence Engine with CCP. 34 MCP tools, 8 read modes, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge with temporal facts + contradiction detection, multi-agent context sharing + diaries, LITM-aware positioning, AAAK compact format, adaptive compression with Thompson Sampling bandits. Supports 24 AI tools. Reduces LLM token consumption by up to 99%."
+description = "Context Runtime for AI Agents with CCP. 42 MCP tools, 10 read modes, 90+ compression patterns, cross-session memory (CCP), persistent AI knowledge with temporal facts + contradiction detection, multi-agent context sharing + diaries, LITM-aware positioning, AAAK compact format, adaptive compression with Thompson Sampling bandits. Supports 24 AI tools. Reduces LLM token consumption by up to 99%."
 license = "MIT"
 repository = "https://github.com/jadzeino/betterctx-client"
 homepage = "https://betterctx.com"
@@ -83,6 +83,7 @@ chrono = { version = "0.4", features = ["serde"] }
 toml = "0.8"
 similar = "2"
 flate2 = "1"
+rusqlite = { version = "0.39.0", features = ["bundled"] }
 tree-sitter = { version = "0.26", optional = true }
 tree-sitter-rust = { version = "0.24", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
@@ -121,6 +122,7 @@ rand = { version = "0.9.3", optional = true }
 glob = "0.3.3"
 ratatui = "0.30"
 crossterm = "0.28"
+rpassword = "7.4.0"
 
 [profile.release]
 opt-level = "z"

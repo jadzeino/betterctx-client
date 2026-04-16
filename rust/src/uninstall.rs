@@ -81,7 +81,7 @@ fn remove_shell_hook(home: &Path) -> bool {
 fn remove_mcp_configs(home: &Path) -> bool {
     let configs: Vec<(&str, PathBuf)> = vec![
         ("Cursor", home.join(".cursor/mcp.json")),
-        ("Claude Code", home.join(".claude.json")),
+        ("Claude Code", crate::setup::claude_config_json_path(home)),
         ("Windsurf", home.join(".codeium/windsurf/mcp_config.json")),
         ("Gemini CLI", home.join(".gemini/settings/mcp.json")),
         (
@@ -159,7 +159,10 @@ fn remove_mcp_configs(home: &Path) -> bool {
 
 fn remove_rules_files(home: &Path) -> bool {
     let rules_files: Vec<(&str, PathBuf)> = vec![
-        ("Claude Code", home.join(".claude/CLAUDE.md")),
+        (
+            "Claude Code",
+            crate::setup::claude_config_dir(home).join("CLAUDE.md"),
+        ),
         ("Cursor", home.join(".cursor/rules/better-ctx.mdc")),
         ("Gemini CLI", home.join(".gemini/GEMINI.md")),
         (
@@ -168,17 +171,11 @@ fn remove_rules_files(home: &Path) -> bool {
         ),
         ("Codex CLI", home.join(".codex/LEAN-CTX.md")),
         ("Codex CLI", home.join(".codex/instructions.md")),
-        (
-            "Windsurf",
-            home.join(".codeium/windsurf/rules/better-ctx.md"),
-        ),
+        ("Windsurf", home.join(".codeium/windsurf/rules/better-ctx.md")),
         ("Zed", home.join(".config/zed/rules/better-ctx.md")),
         ("Cline", home.join(".cline/rules/better-ctx.md")),
         ("Roo Code", home.join(".roo/rules/better-ctx.md")),
-        (
-            "OpenCode",
-            home.join(".config/opencode/rules/better-ctx.md"),
-        ),
+        ("OpenCode", home.join(".config/opencode/rules/better-ctx.md")),
         ("Continue", home.join(".continue/rules/better-ctx.md")),
         ("Aider", home.join(".aider/rules/better-ctx.md")),
         ("Amp", home.join(".ampcoder/rules/better-ctx.md")),
@@ -224,8 +221,8 @@ fn remove_rules_files(home: &Path) -> bool {
 
 fn remove_hook_files(home: &Path) -> bool {
     let hook_files: Vec<PathBuf> = vec![
-        home.join(".claude/hooks/better-ctx-rewrite.sh"),
-        home.join(".claude/hooks/better-ctx-redirect.sh"),
+        crate::setup::claude_config_dir(home).join("hooks/better-ctx-rewrite.sh"),
+        crate::setup::claude_config_dir(home).join("hooks/better-ctx-redirect.sh"),
         home.join(".cursor/hooks/better-ctx-rewrite.sh"),
         home.join(".cursor/hooks/better-ctx-redirect.sh"),
         home.join(".gemini/hooks/better-ctx-rewrite-gemini.sh"),

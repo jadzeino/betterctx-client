@@ -278,7 +278,8 @@ fn is_tool_detected(target: &RulesTarget, home: &std::path::Path) -> bool {
             if command_exists("claude") {
                 return true;
             }
-            home.join(".claude.json").exists() || home.join(".claude").exists()
+            crate::setup::claude_config_json_path(home).exists()
+                || crate::setup::claude_config_dir(home).exists()
         }
         "Codex CLI" => home.join(".codex").exists() || command_exists("codex"),
         "Cursor" => home.join(".cursor").exists(),
@@ -400,7 +401,7 @@ fn build_rules_targets(home: &std::path::Path) -> Vec<RulesTarget> {
         // --- Shared config files (append-only) ---
         RulesTarget {
             name: "Claude Code",
-            path: home.join(".claude/CLAUDE.md"),
+            path: crate::setup::claude_config_dir(home).join("CLAUDE.md"),
             format: RulesFormat::SharedMarkdown,
         },
         RulesTarget {
@@ -706,11 +707,7 @@ mod tests {
     fn write_dedicated_updates_existing() {
         ensure_temp_dir();
         let path = std::env::temp_dir().join("test_write_dedicated_update.md");
-        std::fs::write(
-            &path,
-            "# better-ctx — Context Engineering Layer\nold version",
-        )
-        .unwrap();
+        std::fs::write(&path, "# better-ctx — Context Engineering Layer\nold version").unwrap();
 
         let result = write_dedicated(&path, RULES_DEDICATED).unwrap();
         assert!(matches!(result, RulesResult::Updated));

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 const MAX_FINDINGS: usize = 20;
 const MAX_DECISIONS: usize = 10;
 const MAX_FILES: usize = 50;
+const MAX_EVIDENCE: usize = 500;
 #[allow(dead_code)]
 const MAX_PROGRESS: usize = 30;
 #[allow(dead_code)]
@@ -27,6 +28,8 @@ pub struct SessionState {
     pub test_results: Option<TestSnapshot>,
     pub progress: Vec<ProgressEntry>,
     pub next_steps: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<EvidenceRecord>,
     pub stats: SessionStats,
 }
 
@@ -78,6 +81,26 @@ pub struct ProgressEntry {
     pub timestamp: DateTime<Utc>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceKind {
+    ToolCall,
+    Manual,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EvidenceRecord {
+    pub kind: EvidenceKind,
+    pub key: String,
+    pub value: Option<String>,
+    pub tool: Option<String>,
+    pub input_md5: Option<String>,
+    pub output_md5: Option<String>,
+    pub agent_id: Option<String>,
+    pub client_name: Option<String>,
+    pub timestamp: DateTime<Utc>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SessionStats {
     pub total_tool_calls: u32,
@@ -117,6 +140,7 @@ impl SessionState {
             test_results: None,
             progress: Vec::new(),
             next_steps: Vec::new(),
+            evidence: Vec::new(),
             stats: SessionStats::default(),
         }
     }
@@ -226,6 +250,62 @@ impl SessionState {
         self.stats.total_tool_calls += 1;
         self.stats.total_tokens_saved += tokens_saved;
         self.stats.total_tokens_input += tokens_input;
+    }
+
+    pub fn record_tool_receipt(
+        &mut self,
+        tool: &str,
+        action: Option<&str>,
+        input_md5: &str,
+        output_md5: &str,
+        agent_id: Option<&str>,
+        client_name: Option<&str>,
+    ) {
+        let now = Utc::now();
+        let mut push = |key: String| {
+            self.evidence.push(EvidenceRecord {
+                kind: EvidenceKind::ToolCall,
+                key,
+                value: None,
+                tool: Some(tool.to_string()),
+                input_md5: Some(input_md5.to_string()),
+                output_md5: Some(output_md5.to_string()),
+                agent_id: agent_id.map(|s| s.to_string()),
+                client_name: client_name.map(|s| s.to_string()),
+                timestamp: now,
+            });
+        };
+
+        push(format!("tool:{tool}"));
+        if let Some(a) = action {
+            push(format!("tool:{tool}:{a}"));
+        }
+        while self.evidence.len() > MAX_EVIDENCE {
+            self.evidence.remove(0);
+        }
+        self.increment();
+    }
+
+    pub fn record_manual_evidence(&mut self, key: &str, value: Option<&str>) {
+        self.evidence.push(EvidenceRecord {
+            kind: EvidenceKind::Manual,
+            key: key.to_string(),
+            value: value.map(|s| s.to_string()),
+            tool: None,
+            input_md5: None,
+            output_md5: None,
+            agent_id: None,
+            client_name: None,
+            timestamp: Utc::now(),
+        });
+        while self.evidence.len() > MAX_EVIDENCE {
+            self.evidence.remove(0);
+        }
+        self.increment();
+    }
+
+    pub fn has_evidence_key(&self, key: &str) -> bool {
+        self.evidence.iter().any(|e| e.key == key)
     }
 
     pub fn record_cache_hit(&mut self) {
@@ -641,7 +721,6 @@ impl SessionState {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SessionSummary {
     pub id: String,
     pub started_at: DateTime<Utc>,

@@ -73,6 +73,8 @@ pub struct Config {
     /// Empty by default — all tools listed, no behaviour change.
     #[serde(default)]
     pub disabled_tools: Vec<String>,
+    #[serde(default)]
+    pub loop_detection: LoopDetectionConfig,
 }
 
 fn default_buddy_enabled() -> bool {
@@ -198,6 +200,28 @@ pub struct AliasEntry {
     pub alias: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoopDetectionConfig {
+    pub normal_threshold: u32,
+    pub reduced_threshold: u32,
+    pub blocked_threshold: u32,
+    pub window_secs: u64,
+    pub search_group_limit: u32,
+}
+
+impl Default for LoopDetectionConfig {
+    fn default() -> Self {
+        Self {
+            normal_threshold: 2,
+            reduced_threshold: 4,
+            blocked_threshold: 6,
+            window_secs: 300,
+            search_group_limit: 10,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -215,6 +239,7 @@ impl Default for Config {
             buddy_enabled: default_buddy_enabled(),
             redirect_exclude: Vec::new(),
             disabled_tools: Vec::new(),
+            loop_detection: LoopDetectionConfig::default(),
         }
     }
 }
@@ -294,6 +319,62 @@ mod disabled_tools_tests {
     fn disabled_tools_deserialization_from_toml() {
         let cfg: Config = toml::from_str(r#"disabled_tools = ["ctx_graph", "ctx_agent"]"#).unwrap();
         assert_eq!(cfg.disabled_tools, vec!["ctx_graph", "ctx_agent"]);
+    }
+}
+
+#[cfg(test)]
+mod loop_detection_config_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_reasonable() {
+        let cfg = LoopDetectionConfig::default();
+        assert_eq!(cfg.normal_threshold, 2);
+        assert_eq!(cfg.reduced_threshold, 4);
+        assert_eq!(cfg.blocked_threshold, 6);
+        assert_eq!(cfg.window_secs, 300);
+        assert_eq!(cfg.search_group_limit, 10);
+    }
+
+    #[test]
+    fn deserialization_defaults_when_missing() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.loop_detection.blocked_threshold, 6);
+        assert_eq!(cfg.loop_detection.search_group_limit, 10);
+    }
+
+    #[test]
+    fn deserialization_from_toml() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [loop_detection]
+            normal_threshold = 1
+            reduced_threshold = 3
+            blocked_threshold = 5
+            window_secs = 120
+            search_group_limit = 8
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.loop_detection.normal_threshold, 1);
+        assert_eq!(cfg.loop_detection.reduced_threshold, 3);
+        assert_eq!(cfg.loop_detection.blocked_threshold, 5);
+        assert_eq!(cfg.loop_detection.window_secs, 120);
+        assert_eq!(cfg.loop_detection.search_group_limit, 8);
+    }
+
+    #[test]
+    fn partial_override_keeps_defaults() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [loop_detection]
+            blocked_threshold = 10
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.loop_detection.blocked_threshold, 10);
+        assert_eq!(cfg.loop_detection.normal_threshold, 2);
+        assert_eq!(cfg.loop_detection.search_group_limit, 10);
     }
 }
 

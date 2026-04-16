@@ -9,12 +9,14 @@ use crate::core::session::SessionState;
 pub mod autonomy;
 pub mod ctx_agent;
 pub mod ctx_analyze;
+pub mod ctx_architecture;
 pub mod ctx_benchmark;
 pub mod ctx_callees;
 pub mod ctx_callers;
 pub mod ctx_compress;
 pub mod ctx_compress_memory;
 pub mod ctx_context;
+pub mod ctx_cost;
 pub mod ctx_dedup;
 pub mod ctx_delta;
 pub mod ctx_discover;
@@ -23,6 +25,8 @@ pub mod ctx_execute;
 pub mod ctx_fill;
 pub mod ctx_graph;
 pub mod ctx_graph_diagram;
+pub mod ctx_heatmap;
+pub mod ctx_impact;
 pub mod ctx_intent;
 pub mod ctx_knowledge;
 pub mod ctx_metrics;
@@ -40,6 +44,7 @@ pub mod ctx_share;
 pub mod ctx_shell;
 pub mod ctx_smart_read;
 pub mod ctx_symbol;
+pub mod ctx_task;
 pub mod ctx_tree;
 pub mod ctx_wrapped;
 
@@ -136,7 +141,6 @@ impl LeanCtxServer {
         let crp_mode = CrpMode::from_env();
 
         let session = SessionState::load_latest().unwrap_or_default();
-
         Self {
             cache: Arc::new(RwLock::new(SessionCache::new())),
             session: Arc::new(RwLock::new(session)),
@@ -149,7 +153,11 @@ impl LeanCtxServer {
             agent_id: Arc::new(RwLock::new(None)),
             client_name: Arc::new(RwLock::new(String::new())),
             autonomy: Arc::new(autonomy::AutonomyState::new()),
-            loop_detector: Arc::new(RwLock::new(crate::core::loop_detection::LoopDetector::new())),
+            loop_detector: Arc::new(RwLock::new(
+                crate::core::loop_detection::LoopDetector::with_config(
+                    &crate::core::config::Config::load().loop_detection,
+                ),
+            )),
         }
     }
 

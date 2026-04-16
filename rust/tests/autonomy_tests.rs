@@ -27,7 +27,7 @@ fn session_lifecycle_fires_once() {
         "ctx_read",
         &mut cache,
         Some("fix auth bug"),
-        None,
+        Some("/tmp/test-project"),
         CrpMode::Tdd,
     );
 
@@ -36,7 +36,7 @@ fn session_lifecycle_fires_once() {
         "ctx_read",
         &mut cache,
         Some("fix auth bug"),
-        None,
+        Some("/tmp/test-project"),
         CrpMode::Tdd,
     );
 
@@ -45,6 +45,27 @@ fn session_lifecycle_fires_once() {
         "flag must be set after first call"
     );
     assert!(second.is_none(), "second call must return None");
+}
+
+#[test]
+fn session_lifecycle_skips_without_project_root() {
+    let state = make_state();
+    let mut cache = SessionCache::new();
+
+    let result = session_lifecycle_pre_hook(
+        &state,
+        "ctx_read",
+        &mut cache,
+        Some("fix auth bug"),
+        None,
+        CrpMode::Tdd,
+    );
+
+    assert!(result.is_none(), "must skip when project_root is None");
+    assert!(
+        !state.session_initialized.load(Ordering::SeqCst),
+        "flag must not be set without project_root"
+    );
 }
 
 #[test]

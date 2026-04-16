@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use ignore::WalkBuilder;
@@ -124,6 +125,8 @@ pub fn handle(
         ));
     }
 
+    let scope_hint = monorepo_scope_hint(&matches, dir);
+
     {
         let file_ext = ext_filter.unwrap_or("rs");
         let mut sym = SymbolMap::new();
@@ -141,6 +144,10 @@ pub fn handle(
                 result = format!("{compressed}{sym_table}");
             }
         }
+    }
+
+    if let Some(hint) = scope_hint {
+        result.push_str(&hint);
     }
 
     let raw_output = raw_result_lines.join("\n");
@@ -209,4 +216,39 @@ fn is_generated_file(path: &Path) -> bool {
         || name.ends_with(".d.ts")
         || name.ends_with(".js.map")
         || name.ends_with(".css.map")
+}
+
+fn monorepo_scope_hint(matches: &[String], search_dir: &str) -> Option<String> {
+    let top_dirs: HashSet<&str> = matches
+        .iter()
+        .filter_map(|m| {
+            let path = m.split(':').next()?;
+            let relative = path.strip_prefix("./").unwrap_or(path);
+            let relative = relative.strip_prefix(search_dir).unwrap_or(relative);
+            let relative = relative.strip_prefix('/').unwrap_or(relative);
+            relative.split('/').next()
+        })
+        .collect();
+
+    if top_dirs.len() > 3 {
+        let mut dirs: Vec<&&str> = top_dirs.iter().collect();
+        dirs.sort();
+        let dir_list: Vec<String> = dirs.iter().take(6).map(|d| format!("'{d}'")).collect();
+        let extra = if top_dirs.len() > 6 {
+            format!(", +{} more", top_dirs.len() - 6)
+        } else {
+            String::new()
+        };
+        Some(format!(
+            "\n\nResults span {} directories ({}{}). \
+             Use the 'path' parameter to scope to a specific service, \
+             e.g. path=\"{}/\".",
+            top_dirs.len(),
+            dir_list.join(", "),
+            extra,
+            dirs[0]
+        ))
+    } else {
+        None
+    }
 }

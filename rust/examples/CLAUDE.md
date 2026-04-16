@@ -26,4 +26,7 @@ better-ctx -c npm install   # compressed output
 - `aggressive` — syntax stripped
 - `entropy` — Shannon + Jaccard filtering
 
-Write, StrReplace, Delete have no better-ctx equivalent — use them normally.
+Use native Edit/StrReplace when available. If Edit requires Read and Read is unavailable,
+use `ctx_edit(path, old_string, new_string)` — it reads, replaces, and writes in one MCP call.
+NEVER loop trying to make Edit work. If it fails, switch to ctx_edit immediately.
+Write, Delete have no better-ctx equivalent — use them normally.

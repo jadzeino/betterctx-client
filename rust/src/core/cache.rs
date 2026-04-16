@@ -16,7 +16,6 @@ fn max_cache_tokens() -> usize {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct CacheEntry {
     pub content: String,
     pub hash: String,
@@ -48,7 +47,6 @@ pub struct CacheStats {
     pub files_tracked: usize,
 }
 
-#[allow(dead_code)]
 impl CacheStats {
     pub fn hit_rate(&self) -> f64 {
         if self.total_reads == 0 {

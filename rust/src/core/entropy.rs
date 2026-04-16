@@ -12,7 +12,6 @@ const BPE_ENTROPY_THRESHOLD: f64 = 1.0;
 const MINHASH_NUM_HASHES: usize = 128;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct EntropyResult {
     pub output: String,
     pub original_tokens: usize,
@@ -20,7 +19,6 @@ pub struct EntropyResult {
     pub techniques: Vec<String>,
 }
 
-#[allow(dead_code)]
 impl EntropyResult {
     pub fn savings_percent(&self) -> f64 {
         if self.original_tokens == 0 {

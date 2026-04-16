@@ -4,10 +4,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use super::auth::{auth_user, AppState};
-
-fn internal_error(e: impl std::fmt::Display) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-}
+use super::helpers::internal_error;
 
 #[derive(Deserialize)]
 pub struct CommandEntry {

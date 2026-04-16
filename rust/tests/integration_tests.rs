@@ -28,13 +28,10 @@ fn binary_prints_help() {
         .expect("failed to run better-ctx");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Intelligence Layer"),
+        stdout.contains("Context Runtime"),
         "help should contain tagline"
     );
-    assert!(
-        stdout.contains("better-ctx"),
-        "help should mention better-ctx"
-    );
+    assert!(stdout.contains("better-ctx"), "help should mention better-ctx");
 }
 
 #[test]
@@ -107,4 +104,169 @@ fn help_shows_environment_section() {
         stdout.contains("BETTER_CTX_RAW"),
         "help should document BETTER_CTX_RAW"
     );
+}
+
+// ── Pipe Guard Tests ────────────────────────────────────────
+
+#[test]
+fn pipe_guard_no_compression_when_stdout_is_piped() {
+    let output = Command::new(env!("CARGO_BIN_EXE_better-ctx"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["-c", "echo hello world"])
+        .output()
+        .expect("failed to run better-ctx -c with piped stdout");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "hello world",
+        "piped stdout must pass through raw output, got: {stdout}"
+    );
+}
+
+#[test]
+fn pipe_guard_force_compress_overrides_pipe_guard() {
+    let output = Command::new(env!("CARGO_BIN_EXE_better-ctx"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("BETTER_CTX_COMPRESS", "1")
+        .args(["-c", "echo hello world"])
+        .output()
+        .expect("failed to run better-ctx -c with BETTER_CTX_COMPRESS");
+    assert!(
+        output.status.success(),
+        "BETTER_CTX_COMPRESS should not crash even with piped stdout"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("hello"),
+        "output should contain the echoed text"
+    );
+}
+
+#[test]
+fn pipe_guard_multiline_output_unchanged_when_piped() {
+    let script = "echo line1; echo line2; echo line3; echo 'result: 42'";
+    let output = Command::new(env!("CARGO_BIN_EXE_better-ctx"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["-c", script])
+        .output()
+        .expect("failed to run better-ctx -c with multiline output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("line1"), "must contain line1");
+    assert!(stdout.contains("line2"), "must contain line2");
+    assert!(stdout.contains("line3"), "must contain line3");
+    assert!(
+        stdout.contains("result: 42"),
+        "must preserve exact output content"
+    );
+}
+
+#[test]
+fn pipe_guard_bash_hook_script_test() {
+    if cfg!(windows) {
+        return;
+    }
+    let binary = env!("CARGO_BIN_EXE_better-ctx");
+    let script = format!(
+        r#"
+_lc() {{
+    if [ -n "${{BETTER_CTX_DISABLED:-}}" ] || [ ! -t 1 ]; then
+        command "$@"
+        return
+    fi
+    '{binary}' -c "$@"
+}}
+# Pipe test: _lc echo should bypass better-ctx when piped
+RESULT=$(_lc echo "pipe-guard-test-value")
+echo "CAPTURED:$RESULT"
+"#
+    );
+    let output = Command::new("bash")
+        .args(["-c", &script])
+        .output()
+        .expect("failed to run bash pipe guard test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("CAPTURED:pipe-guard-test-value"),
+        "pipe guard must bypass better-ctx in command substitution, got: {stdout}"
+    );
+}
+
+#[test]
+fn pipe_guard_bash_hook_pipe_to_sh() {
+    if cfg!(windows) {
+        return;
+    }
+    let binary = env!("CARGO_BIN_EXE_better-ctx");
+    let script = format!(
+        r#"
+_lc() {{
+    if [ -n "${{BETTER_CTX_DISABLED:-}}" ] || [ ! -t 1 ]; then
+        command "$@"
+        return
+    fi
+    '{binary}' -c "$@"
+}}
+# Simulate curl | sh: echo a script, pipe to sh
+_lc echo 'echo INSTALL_SUCCESS' | sh
+"#
+    );
+    let output = Command::new("bash")
+        .args(["-c", &script])
+        .output()
+        .expect("failed to run bash pipe-to-sh test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("INSTALL_SUCCESS"),
+        "piped script must execute correctly through sh, got: {stdout}"
+    );
+}
+
+#[test]
+fn pipe_guard_bash_hook_redirect_to_file() {
+    if cfg!(windows) {
+        return;
+    }
+    let binary = env!("CARGO_BIN_EXE_better-ctx");
+    let tmp = std::env::temp_dir().join("better-ctx-pipe-guard-test.txt");
+    let tmp_path = tmp.to_str().unwrap();
+    let script = format!(
+        r#"
+_lc() {{
+    if [ -n "${{BETTER_CTX_DISABLED:-}}" ] || [ ! -t 1 ]; then
+        command "$@"
+        return
+    fi
+    '{binary}' -c "$@"
+}}
+_lc echo "redirect-test-value" > {tmp_path}
+cat {tmp_path}
+rm -f {tmp_path}
+"#
+    );
+    let output = Command::new("bash")
+        .args(["-c", &script])
+        .output()
+        .expect("failed to run bash redirect test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("redirect-test-value"),
+        "redirected output must be raw, got: {stdout}"
+    );
+}
+
+#[test]
+fn pipe_guard_rust_side_defense_in_depth() {
+    let script = "for i in 1 2 3 4 5; do echo \"item_$i: $(date +%s)\"; done";
+    let output = Command::new(env!("CARGO_BIN_EXE_better-ctx"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["-c", script])
+        .output()
+        .expect("failed to run better-ctx -c");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for i in 1..=5 {
+        assert!(
+            stdout.contains(&format!("item_{i}:")),
+            "Rust-side pipe guard must pass through all lines unchanged (missing item_{i})"
+        );
+    }
 }

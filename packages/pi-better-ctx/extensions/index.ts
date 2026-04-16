@@ -10,10 +10,12 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { homedir, platform } from "node:os";
+import { McpBridge } from "./mcp-bridge.js";
+import type { CompressionStats } from "./types.js";
 
 const CODE_EXTENSIONS = new Set([
   ".rs", ".ts", ".tsx", ".js", ".jsx", ".php", ".py", ".go",
@@ -121,12 +123,6 @@ async function readSlice(path: string, offset?: number, limit?: number) {
   return { text: truncation.content, lines: lines.length, truncated: truncation.truncated };
 }
 
-type CompressionStats = {
-  originalTokens: number;
-  compressedTokens: number;
-  percentSaved: number;
-};
-
 function estimateTokens(text: string) {
   return Math.ceil(text.length / 4);
 }
@@ -230,6 +226,27 @@ function splitFooter(text: string) {
   const match = normalized.match(/\n\n(Compressed \d+ → \d+ tokens \((?:-?\d+|0)%\))$/);
   if (!match) return { body: normalized, footer: undefined as string | undefined };
   return { body: normalized.slice(0, -match[0].length), footer: match[1] };
+}
+
+function isMcpAdapterConfigured(): boolean {
+  const home = homedir();
+  const mcpConfigPaths = [
+    resolve(home, ".pi", "agent", "mcp.json"),
+    resolve(process.cwd(), ".pi", "mcp.json"),
+  ];
+
+  for (const configPath of mcpConfigPaths) {
+    if (!existsSync(configPath)) continue;
+    try {
+      const content = readFileSync(configPath, "utf8");
+      const json = JSON.parse(content);
+      const servers = json?.mcpServers ?? {};
+      if ("better-ctx" in servers) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 async function execLeanCtx(pi: ExtensionAPI, args: string[]) {
@@ -455,15 +472,30 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  const mcpBridge = new McpBridge(resolveBinary());
+
+  if (!isMcpAdapterConfigured()) {
+    mcpBridge.start(pi).catch((err) => {
+      console.error(`[pi-better-ctx] MCP bridge startup failed: ${err}`);
+    });
+  }
+
   pi.registerCommand("better-ctx", {
-    description: "Show the better-ctx binary currently used by the Pi integration",
+    description: "Show better-ctx status: binary path, MCP bridge, and registered tools",
     handler: async (_args, ctx) => {
       const bin = resolveBinary();
       const found = existsSync(bin);
-      ctx.ui.notify(
-        found ? `pi-better-ctx using: ${bin}` : `better-ctx not found. Install: cargo install better-ctx`,
-        found ? "info" : "warning",
-      );
+      const status = mcpBridge.getStatus();
+
+      const lines: string[] = [];
+      lines.push(found ? `Binary: ${bin}` : "Binary: NOT FOUND — install: cargo install better-ctx");
+      lines.push(`MCP bridge: ${status.mode} (${status.connected ? "connected" : "disconnected"})`);
+      lines.push(`MCP tools: ${status.toolCount} registered`);
+      if (status.toolNames.length > 0) {
+        lines.push(`  ${status.toolNames.join(", ")}`);
+      }
+
+      ctx.ui.notify(lines.join("\n"), found && status.connected ? "info" : "warning");
     },
   });
 }

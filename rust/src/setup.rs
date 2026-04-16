@@ -25,6 +25,12 @@ enum ConfigType {
 }
 
 pub fn run_setup() {
+    if crate::shell::is_non_interactive() {
+        eprintln!("Non-interactive terminal detected — running shell hook install only.");
+        crate::cli::cmd_init(&["--global".to_string()]);
+        return;
+    }
+
     use crate::terminal_ui;
 
     let home = match dirs::home_dir() {
@@ -284,7 +290,7 @@ pub fn configure_agent_mcp(agent: &str) -> Result<(), String> {
         "claude" | "claude-code" => push(
             &mut targets,
             "Claude Code",
-            home.join(".claude.json"),
+            claude_config_json_path(&home),
             ConfigType::McpJson,
         ),
         "windsurf" => push(
@@ -368,7 +374,22 @@ pub fn configure_agent_mcp(agent: &str) -> Result<(), String> {
     }
 
     for t in &targets {
-        let _ = write_config(t, &binary)?;
+        let action = write_config(t, &binary)?;
+        let path_display = t.config_path.display();
+        match action {
+            WriteAction::Created => println!(
+                "  \x1b[32m✓\x1b[0m {}: MCP config created at {path_display}",
+                t.name
+            ),
+            WriteAction::Updated => println!(
+                "  \x1b[32m✓\x1b[0m {}: MCP config updated at {path_display}",
+                t.name
+            ),
+            WriteAction::Already => println!(
+                "  \x1b[32m✓\x1b[0m {}: already configured at {path_display}",
+                t.name
+            ),
+        }
     }
 
     if agent == "kiro" {
@@ -436,7 +457,7 @@ fn build_targets(home: &std::path::Path, _binary: &str) -> Vec<EditorTarget> {
         EditorTarget {
             name: "Claude Code",
             agent_key: "claude".to_string(),
-            config_path: home.join(".claude.json"),
+            config_path: claude_config_json_path(home),
             detect_path: detect_claude_path(),
             config_type: ConfigType::McpJson,
         },
@@ -562,16 +583,39 @@ fn build_targets(home: &std::path::Path, _binary: &str) -> Vec<EditorTarget> {
     ]
 }
 
+/// Returns the path to Claude Code's MCP config JSON.
+/// Respects `$CLAUDE_CONFIG_DIR` — Claude Code always creates `.claude.json`
+/// inside that directory. Falls back to `~/.claude.json`.
+pub fn claude_config_json_path(home: &std::path::Path) -> PathBuf {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        return PathBuf::from(dir).join(".claude.json");
+    }
+    home.join(".claude.json")
+}
+
+/// Returns the Claude config directory.
+/// Respects `$CLAUDE_CONFIG_DIR`, falls back to `~/.claude`.
+pub fn claude_config_dir(home: &std::path::Path) -> PathBuf {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+    home.join(".claude")
+}
+
 fn detect_claude_path() -> PathBuf {
-    if let Ok(output) = std::process::Command::new("which").arg("claude").output() {
+    let which_cmd = if cfg!(windows) { "where" } else { "which" };
+    if let Ok(output) = std::process::Command::new(which_cmd).arg("claude").output() {
         if output.status.success() {
             return PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
         }
     }
     if let Some(home) = dirs::home_dir() {
-        let claude_json = home.join(".claude.json");
-        if claude_json.exists() {
-            return claude_json;
+        let cfg = claude_config_json_path(&home);
+        if cfg.exists() {
+            return cfg;
+        }
+        if claude_config_dir(&home).exists() {
+            return claude_config_dir(&home);
         }
     }
     PathBuf::from("/nonexistent")

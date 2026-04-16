@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::config::Config;
+use super::helpers::internal_error;
 
 pub async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
@@ -155,7 +156,7 @@ pub async fn register(
                 .map_err(internal_error)?;
             let link = format!(
                 "{}/api/auth/verify-email?token={}",
-                state.cfg.public_base_url.trim_end_matches('/'),
+                state.cfg.api_base_url.trim_end_matches('/'),
                 token
             );
             if mailer.send_verification(&email, &link).await.is_ok() {
@@ -192,7 +193,7 @@ pub async fn register(
             .map_err(internal_error)?;
         let link = format!(
             "{}/api/auth/verify-email?token={}",
-            state.cfg.public_base_url.trim_end_matches('/'),
+            state.cfg.api_base_url.trim_end_matches('/'),
             token
         );
         if mailer.send_verification(&email, &link).await.is_ok() {
@@ -262,7 +263,7 @@ pub async fn login(
                 .map_err(internal_error)?;
             let link = format!(
                 "{}/api/auth/verify-email?token={}",
-                state.cfg.public_base_url.trim_end_matches('/'),
+                state.cfg.api_base_url.trim_end_matches('/'),
                 token
             );
             let _ = mailer.send_verification(&email, &link).await;
@@ -443,7 +444,7 @@ pub async fn resend_verification(
                     .map_err(internal_error)?;
                 let link = format!(
                     "{}/api/auth/verify-email?token={}",
-                    state.cfg.public_base_url.trim_end_matches('/'),
+                    state.cfg.api_base_url.trim_end_matches('/'),
                     token
                 );
                 let _ = mailer.send_verification(&email, &link).await;
@@ -737,8 +738,4 @@ fn sha256_hex(input: &str) -> String {
     let mut h = Sha256::new();
     h.update(input.as_bytes());
     hex::encode(h.finalize())
-}
-
-fn internal_error<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }

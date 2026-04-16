@@ -1,22 +1,17 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum MessagePriority {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
 }
 
-impl Default for MessagePriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
 impl MessagePriority {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "low" => Self::Low,
             "high" => Self::High,
@@ -37,21 +32,16 @@ impl std::fmt::Display for MessagePriority {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum PrivacyLevel {
     Public,
+    #[default]
     Team,
     Private,
 }
 
-impl Default for PrivacyLevel {
-    fn default() -> Self {
-        Self::Team
-    }
-}
-
 impl PrivacyLevel {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "public" => Self::Public,
             "private" => Self::Private,
@@ -97,7 +87,7 @@ pub enum MessageCategory {
 }
 
 impl MessageCategory {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "task_delegation" | "delegation" => Self::TaskDelegation,
             "task_update" | "update" => Self::TaskUpdate,
@@ -127,12 +117,7 @@ impl std::fmt::Display for MessageCategory {
 }
 
 impl A2AMessage {
-    pub fn new(
-        from: &str,
-        to: Option<&str>,
-        category: MessageCategory,
-        content: &str,
-    ) -> Self {
+    pub fn new(from: &str, to: Option<&str>, category: MessageCategory, content: &str) -> Self {
         Self {
             id: generate_msg_id(),
             from_agent: from.to_string(),
@@ -170,9 +155,7 @@ impl A2AMessage {
     }
 
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| Utc::now() > exp)
-            .unwrap_or(false)
+        self.expires_at.map(|exp| Utc::now() > exp).unwrap_or(false)
     }
 
     pub fn is_visible_to(&self, agent_id: &str) -> bool {

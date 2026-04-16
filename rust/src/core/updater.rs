@@ -1,7 +1,6 @@
 use std::io::Read;
 
-const GITHUB_API_RELEASES: &str =
-    "https://api.github.com/repos/jadzeino/betterctx-client/releases/latest";
+const GITHUB_API_RELEASES: &str = "https://api.github.com/repos/jadzeino/betterctx-client/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn run(args: &[String]) {
@@ -48,9 +47,7 @@ pub fn run(args: &[String]) {
         Some(u) => u,
         None => {
             eprintln!("No binary found for this platform ({asset_name}).");
-            eprintln!(
-                "Download manually: https://github.com/jadzeino/betterctx-client/releases/latest"
-            );
+            eprintln!("Download manually: https://github.com/jadzeino/betterctx-client/releases/latest");
             std::process::exit(1);
         }
     };

@@ -322,7 +322,7 @@ fn seed_knowledge(project_root: &str) {
         (
             "ARCHITECTURE",
             "compression",
-            "8 read modes: full, map, signatures, aggressive, entropy, diff, lines, task",
+            "10 read modes: full, auto, map, signatures, diff, aggressive, entropy, task, reference, lines",
             0.92,
         ),
         (
@@ -407,7 +407,7 @@ fn seed_knowledge(project_root: &str) {
         (
             "ARCHITECTURE",
             "mcp-protocol",
-            "34 MCP tools via rmcp crate",
+            "42 MCP tools via rmcp crate",
             0.96,
         ),
         (

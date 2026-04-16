@@ -3,10 +3,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 
 use super::auth::{auth_user, AppState};
-
-fn internal_error(e: impl std::fmt::Display) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-}
+use super::helpers::internal_error;
 
 pub async fn post_buddy(
     State(state): State<AppState>,

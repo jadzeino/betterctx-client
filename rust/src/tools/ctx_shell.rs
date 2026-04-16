@@ -150,6 +150,10 @@ pub fn handle(command: &str, output: &str, crp_mode: CrpMode) -> String {
 
     let compressed = match patterns::compress_output(command, output) {
         Some(c) => c,
+        None if is_search_command(command) => {
+            let stripped = crate::core::compressor::strip_ansi(output);
+            stripped.to_string()
+        }
         None => generic_compress(output),
     };
 
@@ -176,6 +180,16 @@ pub fn handle(command: &str, output: &str, crp_mode: CrpMode) -> String {
     format!("{compressed}\n{savings}")
 }
 
+fn is_search_command(command: &str) -> bool {
+    let cmd = command.trim_start();
+    cmd.starts_with("grep ")
+        || cmd.starts_with("rg ")
+        || cmd.starts_with("find ")
+        || cmd.starts_with("fd ")
+        || cmd.starts_with("ag ")
+        || cmd.starts_with("ack ")
+}
+
 fn generic_compress(output: &str) -> String {
     let output = crate::core::compressor::strip_ansi(output);
     let lines: Vec<&str> = output
@@ -186,19 +200,22 @@ fn generic_compress(output: &str) -> String {
         })
         .collect();
 
-    if lines.len() <= 10 {
+    if lines.len() <= 20 {
         return lines.join("\n");
     }
 
-    let first_3 = &lines[..3];
-    let last_3 = &lines[lines.len() - 3..];
-    let omitted = lines.len() - 6;
+    let show_count = (lines.len() / 3).min(30);
+    let half = show_count / 2;
+    let first = &lines[..half];
+    let last = &lines[lines.len() - half..];
+    let omitted = lines.len() - (half * 2);
     format!(
-        "{}\n[truncated: showing 6/{} lines, {} omitted. Use raw=true for full output.]\n{}",
-        first_3.join("\n"),
+        "{}\n[truncated: showing {}/{} lines, {} omitted. Use raw=true for full output.]\n{}",
+        first.join("\n"),
+        half * 2,
         lines.len(),
         omitted,
-        last_3.join("\n")
+        last.join("\n")
     )
 }
 
@@ -488,5 +505,60 @@ mod tests {
             result.len() < output.len() + 100,
             "normal output should be compressed, not inflated"
         );
+    }
+
+    #[test]
+    fn is_search_command_detects_grep() {
+        assert!(is_search_command("grep -r pattern src/"));
+        assert!(is_search_command("rg pattern src/"));
+        assert!(is_search_command("find . -name '*.rs'"));
+        assert!(is_search_command("fd pattern"));
+        assert!(is_search_command("ag pattern src/"));
+        assert!(is_search_command("ack pattern"));
+    }
+
+    #[test]
+    fn is_search_command_rejects_non_search() {
+        assert!(!is_search_command("cargo build"));
+        assert!(!is_search_command("git status"));
+        assert!(!is_search_command("npm install"));
+        assert!(!is_search_command("cat file.rs"));
+    }
+
+    #[test]
+    fn generic_compress_preserves_short_output() {
+        let lines: Vec<String> = (1..=20).map(|i| format!("Line {i}")).collect();
+        let output = lines.join("\n");
+        let result = generic_compress(&output);
+        assert_eq!(result, output);
+    }
+
+    #[test]
+    fn generic_compress_scales_with_length() {
+        let lines: Vec<String> = (1..=60).map(|i| format!("Line {i}")).collect();
+        let output = lines.join("\n");
+        let result = generic_compress(&output);
+        assert!(result.contains("truncated"));
+        let shown_count = result.lines().count();
+        assert!(
+            shown_count > 10,
+            "should show more than old 6-line limit, got {shown_count}"
+        );
+        assert!(shown_count < 60, "should be truncated, not full output");
+    }
+
+    #[test]
+    fn handle_preserves_search_results() {
+        let lines: Vec<String> = (1..=30)
+            .map(|i| format!("src/file{i}.rs:42: fn search_result()"))
+            .collect();
+        let output = lines.join("\n");
+        let result = handle("rg search_result src/", &output, CrpMode::Off);
+        for i in 1..=30 {
+            assert!(
+                result.contains(&format!("file{i}")),
+                "search result file{i} should be preserved in output"
+            );
+        }
     }
 }

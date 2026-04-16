@@ -12,9 +12,10 @@ pub fn refresh_installed_hooks() {
         None => return,
     };
 
-    let claude_hooks = home.join(".claude/hooks/better-ctx-rewrite.sh").exists()
-        || home.join(".claude/settings.json").exists()
-            && std::fs::read_to_string(home.join(".claude/settings.json"))
+    let claude_dir = crate::setup::claude_config_dir(&home);
+    let claude_hooks = claude_dir.join("hooks/better-ctx-rewrite.sh").exists()
+        || claude_dir.join("settings.json").exists()
+            && std::fs::read_to_string(claude_dir.join("settings.json"))
                 .unwrap_or_default()
                 .contains("better-ctx");
 
@@ -41,10 +42,7 @@ pub fn refresh_installed_hooks() {
         install_gemini_hook_config(&home);
     }
 
-    if home
-        .join(".codex/hooks/better-ctx-rewrite-codex.sh")
-        .exists()
-    {
+    if home.join(".codex/hooks/better-ctx-rewrite-codex.sh").exists() {
         install_codex_hook_scripts(&home);
     }
 }
@@ -406,13 +404,16 @@ fn install_claude_hook(global: bool) {
 }
 
 fn install_claude_global_md(home: &std::path::Path) {
-    let claude_dir = home.join(".claude");
+    let claude_dir = crate::setup::claude_config_dir(home);
     let _ = std::fs::create_dir_all(&claude_dir);
     let global_md = claude_dir.join("CLAUDE.md");
 
     let existing = std::fs::read_to_string(&global_md).unwrap_or_default();
     if existing.contains("better-ctx") {
-        println!("  \x1b[32m✓\x1b[0m ~/.claude/CLAUDE.md already configured");
+        println!(
+            "  \x1b[32m✓\x1b[0m {}/CLAUDE.md already configured",
+            claude_dir.display()
+        );
         return;
     }
 
@@ -429,11 +430,14 @@ fn install_claude_global_md(home: &std::path::Path) {
         merged.push_str(content);
         write_file(&global_md, &merged);
     }
-    println!("  \x1b[32m✓\x1b[0m Installed global ~/.claude/CLAUDE.md");
+    println!(
+        "  \x1b[32m✓\x1b[0m Installed global {}/CLAUDE.md",
+        claude_dir.display()
+    );
 }
 
 fn install_claude_hook_scripts(home: &std::path::Path) {
-    let hooks_dir = home.join(".claude").join("hooks");
+    let hooks_dir = crate::setup::claude_config_dir(home).join("hooks");
     let _ = std::fs::create_dir_all(&hooks_dir);
 
     let binary = resolve_binary_path();
@@ -479,13 +483,13 @@ fn install_claude_hook_scripts(home: &std::path::Path) {
 }
 
 fn install_claude_hook_config(home: &std::path::Path) {
-    let hooks_dir = home.join(".claude").join("hooks");
+    let hooks_dir = crate::setup::claude_config_dir(home).join("hooks");
     let binary = resolve_binary_path();
 
     let rewrite_cmd = format!("{binary} hook rewrite");
     let redirect_cmd = format!("{binary} hook redirect");
 
-    let settings_path = home.join(".claude").join("settings.json");
+    let settings_path = crate::setup::claude_config_dir(home).join("settings.json");
     let settings_content = if settings_path.exists() {
         std::fs::read_to_string(&settings_path).unwrap_or_default()
     } else {
@@ -1400,8 +1404,7 @@ mod tests {
 
     #[test]
     fn cursor_hook_detects_old_format_needs_migration() {
-        let old_format =
-            r#"{"hooks":[{"event":"preToolUse","command":"better-ctx hook rewrite"}]}"#;
+        let old_format = r#"{"hooks":[{"event":"preToolUse","command":"better-ctx hook rewrite"}]}"#;
         let has_correct =
             old_format.contains("\"version\"") && old_format.contains("\"preToolUse\"");
         assert!(

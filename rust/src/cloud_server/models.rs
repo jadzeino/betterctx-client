@@ -5,6 +5,7 @@ use axum::Json;
 use serde::Serialize;
 
 use super::auth::{auth_user, AppState};
+use super::helpers::internal_error;
 
 #[derive(Serialize)]
 pub struct ModelsResponse {
@@ -75,8 +76,4 @@ GROUP BY file_ext, size_bucket, best_mode
     }
 
     Ok(Json(ModelsResponse { models }))
-}
-
-fn internal_error<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }

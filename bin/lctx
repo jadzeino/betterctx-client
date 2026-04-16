@@ -16,10 +16,12 @@ set -euo pipefail
 
 LEAN_CTX=""
 AGENT=""
+AGENTS=""
 PROJECT_DIR=""
 PROMPT=""
 RESUME_ID=""
 SCAN_ONLY=false
+PARALLEL=false
 
 find_better_ctx() {
   if command -v better-ctx &>/dev/null; then
@@ -68,6 +70,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent|-a)
       AGENT="$2"; shift 2 ;;
+    --agents)
+      AGENTS="$2"; PARALLEL=true; shift 2 ;;
     --resume|-r)
       RESUME_ID="$2"; shift 2 ;;
     --scan-only)
@@ -77,15 +81,17 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --agent, -a NAME    Agent to use: claude|cursor|gemini|codex|windsurf|cline"
+      echo "  --agents LIST       Launch multiple agents in parallel (comma-separated)"
       echo "  --resume, -r ID     Resume Claude Code session"
       echo "  --scan-only         Build project graph only, don't launch agent"
       echo "  --help, -h          Show this help"
       echo ""
       echo "Examples:"
-      echo "  bctx                              # auto-detect, current dir"
-      echo "  bctx --agent claude ~/my-project  # Claude Code on specific project"
-      echo '  bctx ~/my-project "fix auth"      # Claude Code with prompt'
-      echo "  bctx --scan-only                  # just build the graph"
+      echo "  bctx                                     # auto-detect, current dir"
+      echo "  bctx --agent claude ~/my-project         # Claude Code on specific project"
+      echo '  bctx ~/my-project "fix auth"             # Claude Code with prompt'
+      echo "  bctx --agents claude,gemini              # parallel agents"
+      echo "  bctx --scan-only                         # just build the graph"
       exit 0 ;;
     -*)
       echo "Unknown option: $1"; exit 1 ;;
@@ -108,12 +114,32 @@ echo "Using:   $LEAN_CTX"
 
 echo ""
 echo "Building project graph..."
-"$LEAN_CTX" -c "$LEAN_CTX graph build" 2>/dev/null \
-  || BETTER_CTX_ACTIVE=1 "$LEAN_CTX" graph build 2>/dev/null \
-  || echo "(graph build skipped — run in MCP mode for full graph)"
+"$LEAN_CTX" graph build "$PROJECT_DIR" 2>/dev/null \
+  || echo "(graph build skipped — will be built automatically in MCP mode)"
 
 if $SCAN_ONLY; then
   echo "Done (scan only)."
+  exit 0
+fi
+
+if $PARALLEL; then
+  echo "Multi-Agent Launch: $AGENTS"
+  echo ""
+  IFS=',' read -ra AGENT_LIST <<< "$AGENTS"
+  PIDS=()
+  for ag in "${AGENT_LIST[@]}"; do
+    ag="$(echo "$ag" | xargs)"
+    echo "Starting agent: $ag"
+    (
+      export BETTER_CTX_AGENT_ROLE="$ag"
+      "$0" --agent "$ag" "$PROJECT_DIR" ${PROMPT:+"$PROMPT"}
+    ) &
+    PIDS+=($!)
+  done
+  echo ""
+  echo "Launched ${#AGENT_LIST[@]} agents in parallel (PIDs: ${PIDS[*]})"
+  echo "Use 'better-ctx agent sync' or ctx_agent(action=sync) to monitor."
+  wait
   exit 0
 fi
 

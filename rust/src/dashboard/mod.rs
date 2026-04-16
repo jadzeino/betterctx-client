@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn check_auth_with_valid_bearer() {
-        let req = "GET /api/stats HTTP/1.1\r\nAuthorization: Bearer lctx_abc123\r\n\r\n";
+        let req = "GET /api/stats HTTP/1.1\r\nAuthorization: Bearer bctx_abc123\r\n\r\n";
         assert!(check_auth(req, "lctx_abc123"));
     }
 
@@ -674,7 +674,7 @@ mod tests {
 
     #[test]
     fn check_auth_lowercase_bearer() {
-        let req = "GET /api/stats HTTP/1.1\r\nauthorization: bearer lctx_abc123\r\n\r\n";
+        let req = "GET /api/stats HTTP/1.1\r\nauthorization: bearer bctx_abc123\r\n\r\n";
         assert!(check_auth(req, "lctx_abc123"));
     }
 

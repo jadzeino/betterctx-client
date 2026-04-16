@@ -10,9 +10,7 @@ pub fn handle(action: &str, agent_id: Option<&str>, limit: Option<usize>) -> Str
         "tools" => handle_tool_breakdown(&store, lim),
         "json" => serde_json::to_string_pretty(&store).unwrap_or_else(|_| "{}".to_string()),
         "reset" => handle_reset(),
-        _ => format!(
-            "Unknown action '{action}'. Available: report, agent, tools, json, reset"
-        ),
+        _ => format!("Unknown action '{action}'. Available: report, agent, tools, json, reset"),
     }
 }
 

@@ -1,0 +1,106 @@
+{
+  "name": "better-ctx",
+  "displayName": "better-ctx — Token Intelligence",
+  "description": "Context Runtime for AI Agents. Live token savings, one-click setup, 42 MCP tools, 10 read modes. Reduces LLM token consumption by up to 99%.",
+  "version": "0.1.0",
+  "publisher": "jadzeino",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jadzeino/betterctx-client.git",
+    "directory": "packages/vscode-better-ctx"
+  },
+  "homepage": "https://betterctx.com",
+  "bugs": {
+    "url": "https://github.com/jadzeino/betterctx-client/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "better-ctx",
+    "token-optimization",
+    "mcp",
+    "ai",
+    "context-compression",
+    "copilot"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "better-ctx.setup",
+        "title": "better-ctx: Setup (auto-configure shell + editors)"
+      },
+      {
+        "command": "better-ctx.doctor",
+        "title": "better-ctx: Doctor (diagnostics)"
+      },
+      {
+        "command": "better-ctx.gain",
+        "title": "better-ctx: Show Token Savings"
+      },
+      {
+        "command": "better-ctx.dashboard",
+        "title": "better-ctx: Open Dashboard"
+      },
+      {
+        "command": "better-ctx.heatmap",
+        "title": "better-ctx: Show Context Heatmap"
+      },
+      {
+        "command": "better-ctx.configureMcp",
+        "title": "better-ctx: Configure MCP for Copilot"
+      }
+    ],
+    "configuration": {
+      "title": "better-ctx",
+      "properties": {
+        "better-ctx.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to better-ctx binary (auto-detected if empty)"
+        },
+        "better-ctx.autoSetup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically configure MCP on activation"
+        },
+        "better-ctx.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show token savings in the status bar"
+        },
+        "better-ctx.refreshInterval": {
+          "type": "number",
+          "default": 30,
+          "description": "Status bar refresh interval in seconds"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

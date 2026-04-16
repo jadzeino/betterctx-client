@@ -1,8 +1,8 @@
 {
   "name": "pi-better-ctx",
-  "version": "3.1.0",
-  "description": "Pi Coding Agent extension that routes bash, read, grep, find, and ls through better-ctx for 60-90% token savings",
-  "keywords": ["pi-package", "better-ctx", "token-optimization", "compression"],
+  "version": "3.1.2",
+  "description": "Pi Coding Agent extension with first-class MCP support — routes bash, read, grep, find, and ls through better-ctx CLI, and exposes all 42 better-ctx MCP tools (ctx_session, ctx_knowledge, ctx_semantic_search, ctx_impact, ctx_architecture, ctx_workflow, etc.) natively in Pi",
+  "keywords": ["pi-package", "better-ctx", "token-optimization", "compression", "mcp"],
   "license": "MIT",
   "author": "Yves Gugger",
   "repository": {
@@ -13,6 +13,9 @@
   "homepage": "https://betterctx.com",
   "bugs": {
     "url": "https://github.com/jadzeino/betterctx-client/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": ">=0.50.0",
