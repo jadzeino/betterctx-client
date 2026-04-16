@@ -267,7 +267,8 @@ fn generated_script_handles_windows_path() {
 
 #[test]
 fn generated_script_handles_path_with_spaces() {
-    let script = better_ctx::hooks::generate_rewrite_script("/c/Program Files/better-ctx/better-ctx.exe");
+    let script =
+        better_ctx::hooks::generate_rewrite_script("/c/Program Files/better-ctx/better-ctx.exe");
     assert!(
         script.contains("BETTER_CTX_BIN=\"/c/Program Files/better-ctx/better-ctx.exe\""),
         "path with spaces should be quoted"

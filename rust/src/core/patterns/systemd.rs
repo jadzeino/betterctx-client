@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 pub fn compress(cmd: &str, output: &str) -> Option<String> {
@@ -97,7 +98,7 @@ fn compress_journal(output: &str) -> String {
     }
 
     let mut sorted: Vec<_> = deduped.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|a| Reverse(a.1));
 
     let top: Vec<String> = sorted
         .iter()

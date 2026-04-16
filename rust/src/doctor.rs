@@ -851,7 +851,9 @@ pub fn run_compact() {
     let status = if passed == total {
         format!("{GREEN}✓ All {total} checks passed{RST}")
     } else {
-        format!("{YELLOW}{passed}/{total} passed{RST} — run {BOLD}better-ctx doctor{RST} for details")
+        format!(
+            "{YELLOW}{passed}/{total} passed{RST} — run {BOLD}better-ctx doctor{RST} for details"
+        )
     };
     println!("  {status}");
 }

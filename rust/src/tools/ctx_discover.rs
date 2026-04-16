@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use crate::core::tokens::count_tokens;
@@ -80,7 +81,7 @@ pub fn analyze_history(history: &[String], limit: usize) -> DiscoverResult {
     }
 
     let mut sorted: Vec<_> = missed.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|a| Reverse(a.1));
 
     let total_missed: u32 = sorted.iter().map(|(_, c)| c).sum();
     let est_tokens_per_cmd = 500;
@@ -216,7 +217,8 @@ pub fn format_cli_output(result: &DiscoverResult) -> String {
         result.already_optimized
     ));
     lines.push(String::new());
-    lines.push("Run 'better-ctx init --global' to enable compression for all commands.".to_string());
+    lines
+        .push("Run 'better-ctx init --global' to enable compression for all commands.".to_string());
 
     lines.join("\n")
 }

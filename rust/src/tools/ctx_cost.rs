@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use crate::core::a2a::cost_attribution::{format_cost_report, CostStore};
 
 pub fn handle(action: &str, agent_id: Option<&str>, limit: Option<usize>) -> String {
@@ -45,7 +47,7 @@ fn handle_agent_detail(store: &CostStore, agent_id: Option<&str>) -> String {
             if !agent.tools_used.is_empty() {
                 lines.push("  Tools used:".to_string());
                 let mut tools: Vec<_> = agent.tools_used.iter().collect();
-                tools.sort_by(|a, b| b.1.cmp(a.1));
+                tools.sort_by_key(|a| Reverse(a.1));
                 for (name, count) in tools {
                     lines.push(format!("    {name}: {count} calls"));
                 }

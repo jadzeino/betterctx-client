@@ -707,7 +707,11 @@ mod tests {
     fn write_dedicated_updates_existing() {
         ensure_temp_dir();
         let path = std::env::temp_dir().join("test_write_dedicated_update.md");
-        std::fs::write(&path, "# better-ctx — Context Engineering Layer\nold version").unwrap();
+        std::fs::write(
+            &path,
+            "# better-ctx — Context Engineering Layer\nold version",
+        )
+        .unwrap();
 
         let result = write_dedicated(&path, RULES_DEDICATED).unwrap();
         assert!(matches!(result, RulesResult::Updated));

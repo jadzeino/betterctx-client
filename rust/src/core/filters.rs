@@ -127,7 +127,10 @@ fn compile_rule(raw: RawFilterRule, path: &Path) -> Option<CompiledRule> {
     let command_re = raw.command.as_ref().and_then(|s| {
         Regex::new(s)
             .map_err(|e| {
-                eprintln!("better-ctx: invalid command regex in {}: {e}", path.display());
+                eprintln!(
+                    "better-ctx: invalid command regex in {}: {e}",
+                    path.display()
+                );
             })
             .ok()
     });
@@ -135,7 +138,10 @@ fn compile_rule(raw: RawFilterRule, path: &Path) -> Option<CompiledRule> {
     let pattern_re = raw.pattern.as_ref().and_then(|s| {
         Regex::new(s)
             .map_err(|e| {
-                eprintln!("better-ctx: invalid pattern regex in {}: {e}", path.display());
+                eprintln!(
+                    "better-ctx: invalid pattern regex in {}: {e}",
+                    path.display()
+                );
             })
             .ok()
     });

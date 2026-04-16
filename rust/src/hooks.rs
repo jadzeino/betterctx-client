@@ -42,7 +42,10 @@ pub fn refresh_installed_hooks() {
         install_gemini_hook_config(&home);
     }
 
-    if home.join(".codex/hooks/better-ctx-rewrite-codex.sh").exists() {
+    if home
+        .join(".codex/hooks/better-ctx-rewrite-codex.sh")
+        .exists()
+    {
         install_codex_hook_scripts(&home);
     }
 }
@@ -1404,7 +1407,8 @@ mod tests {
 
     #[test]
     fn cursor_hook_detects_old_format_needs_migration() {
-        let old_format = r#"{"hooks":[{"event":"preToolUse","command":"better-ctx hook rewrite"}]}"#;
+        let old_format =
+            r#"{"hooks":[{"event":"preToolUse","command":"better-ctx hook rewrite"}]}"#;
         let has_correct =
             old_format.contains("\"version\"") && old_format.contains("\"preToolUse\"");
         assert!(
